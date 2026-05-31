@@ -21,6 +21,7 @@ limitations under the License.
 
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Main CI](https://github.com/neroduality/pcsc-fido/actions/workflows/main-ci.yml/badge.svg?branch=main)](https://github.com/neroduality/pcsc-fido/actions/workflows/main-ci.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/neroduality/pcsc-fido/badge)](https://securityscorecards.dev/viewer/?uri=github.com/neroduality/pcsc-fido)
 [![Release](https://img.shields.io/github/v/release/neroduality/pcsc-fido)](https://github.com/neroduality/pcsc-fido/releases)
 [![Documentation](https://img.shields.io/badge/docs-read-blue.svg)](docs/)
 ![Linux only](https://img.shields.io/badge/platform-Linux%20only-blue)
