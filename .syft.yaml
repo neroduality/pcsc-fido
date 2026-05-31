@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright (C) 2026 Nero Duality, LLC.
+#
+# Syft SBOM configuration — keep SBOMs focused on maintained sources (exclude CI/build trees).
+
+exclude:
+  - "./build/**"
+  - "./dist/**"
+  - "./scan-build-report/**"

@@ -1,0 +1,192 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright (C) 2026 Nero Duality, LLC.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Tag-driven release: build DEB/RPM packages and publish to GitHub Releases.
+# Maintainer guide: RELEASE.md
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build-test-lint:
+    name: Build, test, lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install dependencies
+        env:
+          PCSC_FIDO_ALLOW_SUDO_DEPS: 1
+        run: bash .github/scripts/install-linux-deps.sh
+
+      - name: Lint (strict tools)
+        run: bash .github/linters/ci-lint.sh --strict-tools
+
+  package-deb-native:
+    name: Package DEB (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    needs: [build-test-lint]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Build DEB
+        env:
+          PCSC_FIDO_ALLOW_SUDO_DEPS: 1
+        run: bash .github/scripts/release-build-package.sh --format deb --arch "${{ matrix.arch }}"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pcsc-fido-deb-${{ matrix.arch }}
+          path: dist/*.deb
+
+  package-deb-cross:
+    name: Package DEB (${{ matrix.arch }}, cross)
+    runs-on: ubuntu-24.04
+    container:
+      image: debian:trixie@sha256:4ae67669760b807c19f23902a3fd7c121a6a70cf2ae709035674b23e712e4d62
+    needs: [build-test-lint]
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [armhf, ppc64el, riscv64, s390x]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Build DEB
+        env:
+          PCSC_FIDO_ALLOW_SUDO_DEPS: 1
+        run: bash .github/scripts/release-build-package.sh --format deb --arch "${{ matrix.arch }}" --cross
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pcsc-fido-deb-${{ matrix.arch }}
+          path: dist/*.deb
+
+  package-rpm-native:
+    name: Package RPM (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    needs: [build-test-lint]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Build RPM
+        env:
+          PCSC_FIDO_ALLOW_SUDO_DEPS: 1
+        run: bash .github/scripts/release-build-package.sh --format rpm --arch "${{ matrix.arch }}"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pcsc-fido-rpm-${{ matrix.arch }}
+          path: dist/*.rpm
+
+  package-rpm-cross:
+    name: Package RPM (${{ matrix.arch }}, cross)
+    runs-on: ubuntu-24.04
+    container:
+      image: debian:trixie@sha256:4ae67669760b807c19f23902a3fd7c121a6a70cf2ae709035674b23e712e4d62
+    needs: [build-test-lint]
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [armhf, ppc64el, riscv64, s390x]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Build RPM
+        env:
+          PCSC_FIDO_ALLOW_SUDO_DEPS: 1
+        run: bash .github/scripts/release-build-package.sh --format rpm --arch "${{ matrix.arch }}" --cross
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pcsc-fido-rpm-${{ matrix.arch }}
+          path: dist/*.rpm
+
+  publish:
+    name: Publish release
+    runs-on: ubuntu-24.04
+    needs: [package-deb-native, package-deb-cross, package-rpm-native, package-rpm-cross]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: pcsc-fido-*
+          path: dist
+          merge-multiple: true
+
+      - name: Source tarball and SHA256SUMS
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          bash .github/scripts/release-build-source.sh --tag "$TAG" --output-dir dist
+          bash .github/scripts/helper-release-sha256sums.sh dist
+          bash .github/scripts/release-verify-artifacts.sh dist
+
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          bash .github/scripts/release-render-notes.sh .github/release-notes.md > release-notes.md
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" --title "$TAG" --notes-file release-notes.md
+          gh release upload "$TAG" dist/* --clobber

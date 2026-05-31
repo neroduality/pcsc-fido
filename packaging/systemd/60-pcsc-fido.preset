@@ -1,0 +1,2 @@
+# pcsc-fido: enable manually after install (like pcscd.socket).
+disable pcsc-fido.service

@@ -1,0 +1,13 @@
+Source: pcsc-fido
+Section: misc
+Priority: optional
+Maintainer: Nero Duality <200@neroduality.com>
+Build-Depends: debhelper-compat (= 13), cmake, pkg-config, libpcsclite-dev, systemd-dev
+Standards-Version: 4.7.0
+Rules-Requires-Root: no
+
+Package: pcsc-fido
+Architecture: any
+Depends: libpcsclite1, ${shlibs:Depends}, ${misc:Depends}, pcscd, libccid, udev, systemd, polkitd | policykit-1
+Description: Daemon-side stopgap middleware for Linux: Exposes a virtual FIDO HID device via UHID
+to relay browser CTAP/U2F requests to NFC security keys over the PC/SC stack.

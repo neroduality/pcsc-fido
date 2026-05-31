@@ -1,0 +1,139 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright (C) 2026 Nero Duality, LLC.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Host-side CI on linux/amd64 GitHub runners: lint gate, then matrix of distro containers.
+# Local reproduction: make ci-suite CI_SUITE_FLAGS=--main; see .github/WORKFLOWS.md
+name: Main CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  spec-coverage:
+    name: Spec coverage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Ensure PyYAML
+        run: sudo apt-get update && sudo apt-get install -y python3-yaml
+
+      - name: Spec coverage (checklist symbols)
+        run: bash .github/scripts/run-local-spec-coverage.sh
+
+  lint:
+    name: Lint (make lint)
+    needs: [spec-coverage]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install lint and build dependencies
+        env:
+          PCSC_FIDO_ALLOW_SUDO_DEPS: 1
+        run: bash .github/scripts/install-linux-deps.sh
+
+      - name: Lint (strict tools)
+        run: bash .github/linters/ci-lint.sh --strict-tools
+
+  host-linux:
+    name: ${{ matrix.name }}
+    needs: [lint, spec-coverage]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: debian-trixie
+            name: Debian trixie
+            image: debian:trixie-slim
+          - id: fedora-43
+            name: Fedora 43
+            image: fedora:43
+
+    container:
+      image: ${{ matrix.image }}
+      options: --platform linux/amd64
+
+    steps:
+      - name: Bootstrap container (CA certs, git)
+        run: |
+          set -euo pipefail
+          if command -v apt-get >/dev/null 2>&1; then
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y --no-install-recommends ca-certificates git
+          elif command -v dnf >/dev/null 2>&1; then
+            dnf install -y --setopt=install_weak_deps=False ca-certificates git
+            dnf clean all
+          else
+            echo 'error: need apt-get or dnf' >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Unit tests + scan-build
+        run: bash .github/scripts/ci-run-tests.sh
+
+      - name: Stage scan-build artifact
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p scan-build-report
+          if [[ ! -f scan-build-report/summary.txt ]] &&
+            ! compgen -G 'scan-build-report/*/index.html' >/dev/null; then
+            {
+              printf 'completed_at: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+              printf 'exit_status: unknown\n'
+              printf 'bug_reports: 0\n'
+              printf 'html_reports: none\n'
+              printf 'note: scan-build did not complete in this job (an earlier step may have failed).\n'
+            } >scan-build-report/summary.txt
+          fi
+
+      - name: Upload scan-build report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: scan-build-${{ matrix.id }}
+          path: scan-build-report
+          if-no-files-found: warn

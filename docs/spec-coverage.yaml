@@ -1,0 +1,325 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright (C) 2026 Nero Duality, LLC.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Spec coverage manifest — pcsc-fido
+# Maps checklist requirements to grep patterns and search roots.
+# This is source-tree traceability only; it does not inspect compiled binaries
+# or installed packages, and is unaffected by Release symbol stripping.
+# Keep aligned with docs/CHECKLIST.md when protocol seams change.
+#
+# Fields per requirement:
+#   label:   human-readable name (printed in CI output)
+#   pattern: extended regex; any matching line satisfies the requirement
+#   paths:   repo-relative directories to search (missing paths are skipped;
+#            fail when all listed paths are absent)
+
+fido-ctap-hid:
+  summary: FIDO CTAP HID and virtual browser transport
+  requirements:
+    uhid-daemon:
+      label: Linux UHID virtual FIDO browser daemon
+      pattern: 'UHID_CREATE2|pcsc-fido|pcsc-fido\.service'
+      paths:
+        - src
+        - CMakeLists.txt
+        - packaging
+
+    ctaphid-init:
+      label: CTAPHID INIT channel handshake
+      pattern: 'PCSC_FIDO_HID_CMD_INIT|exchange_init|FIDO_CAP_CBOR'
+      paths:
+        - src
+        - include
+        - tests
+
+    ctaphid-framing:
+      label: CTAPHID init and continuation packet framing
+      pattern: 'pcsc_fido_hid_encode_init_packet|pcsc_fido_hid_encode_cont_packet|bad continuation sequence'
+      paths:
+        - src
+        - include
+        - tests
+
+    keepalive:
+      label: CTAPHID keepalive handling
+      pattern: 'PCSC_FIDO_HID_CMD_KEEPALIVE|keepalive and other channel|repeated keepalive'
+      paths:
+        - src
+        - include
+        - tests
+
+    ctaphid-timing-edges:
+      label: CTAPHID timeout and sizing edge cases
+      pattern: 'PCSC_FIDO_CTAPHID_MAX_PAYLOAD|oversized expected returns INVALID_LEN|oversized response rejected|init read timeout|repeated keepalive'
+      paths:
+        - tests
+
+    lock-cancel:
+      label: CTAPHID LOCK/CANCEL browser flow handling
+      pattern: 'PCSC_FIDO_HID_CMD_LOCK|PCSC_FIDO_HID_CMD_CANCEL|UHID_CLOSE|pcsc_fido_bridge_cancel'
+      paths:
+        - src
+        - include
+        - tests
+
+    reader-enumeration:
+      label: PC/SC reader enumeration startup lag
+      pattern: 'PCSC_FIDO_BRIDGE_READER_ENUM_TIMEOUT_SEC|no PC/SC readers available|reader enumeration|test_reader_select|test_reader_ops|pick_respects_readers_len|pcsc_fido_pick_reader_from_list|pcsc_fido_reader_list_snapshot|readers_len|--list-readers|PCSC_FIDO_READER=picc|PCSC_FIDO_READER_NAME_MAX|pcsc_fido_reader_confirm_card_present|pcsc_fido_reader_probe_fido_card|pcsc_fido_reader_status_has_card'
+      paths:
+        - src
+        - tests
+        - docs
+
+    reader-name-cap:
+      label: PC/SC reader name length cap and rejection
+      pattern: 'PCSC_FIDO_READER_NAME_MAX|PCSC_FIDO_READER_PICK_NAME_TOO_LONG|PC/SC reader name too long|pcsc_fido_copy_cstr'
+      paths:
+        - src
+        - include
+        - tests
+        - docs
+
+    multi-reader-card-selection:
+      label: Multiple PC/SC reader card-presence selection
+      pattern: 'wait_for_present_reader|selected by card presence|Generic PC/SC Smart Card Reader|model-specific'
+      paths:
+        - src
+        - tests
+        - docs
+
+    pcsc-context:
+      label: PC/SC service/socket activation lag
+      pattern: 'SCardEstablishContext|SCARD_SCOPE_USER|pcscd.socket'
+      paths:
+        - src
+        - packaging
+
+    terminal-cleanup:
+      label: Terminal WebAuthn operation PC/SC cleanup
+      pattern: 'is_terminal_webauthn_request|completed WebAuthn operation|pcsc_fido_bridge_reset'
+      paths:
+        - src
+        - docs
+
+    ctap-payload-forwarding:
+      label: Unchanged CTAP payload forwarding without compatibility cache
+      pattern: 'CTAP CBOR/MSG payload bytes are preserved|no compatibility cache|preflight getAssertion is forwarded'
+      paths:
+        - src
+        - docs
+        - tests
+
+    thread-safe-cancel:
+      label: Thread-safe PC/SC cancellation and session snapshots
+      pattern: 'g_session\.generation|active_transmits|pcsc_fido_session_tx_is_current|pcsc_fido_session_verify_ready|pcsc_fido_reader_confirm_card_present|pcsc_fido_session_snapshot_tx|pthread_mutex_lock\(&g_session\.lock\)|pcsc_fido_session_transmit_chained|pcsc_fido_bridge_cancel|test_thread_safety|test_pcsc_session|Thread-safe PC/SC cancellation'
+      paths:
+        - src
+        - Makefile
+        - tests
+        - docs
+
+    browser-cancel-cleanup:
+      label: Browser cancel and stale request cleanup documentation
+      pattern: 'UHID client closed|CTAPHID CANCEL|pcsc_fido_bridge_cancel'
+      paths:
+        - src
+        - docs
+
+    browser-state-observations:
+      label: Browser/profile WebAuthn state observations
+      pattern: 'fresh tab/profile|clear site data|browser still fails'
+      paths:
+        - docs
+
+    debug-logging:
+      label: Configurable bridge debug logging
+      pattern: 'PCSC_FIDO_DEBUG|pcsc_fido_bridge_debug_enabled'
+      paths:
+        - src
+        - Makefile
+        - docs
+
+    rate-limiting:
+      label: CTAPHID and PC/SC exchange rate limiting
+      pattern: 'PCSC_FIDO_RATE_LIMIT|PCSC_FIDO_RATE_CTAPHID|PCSC_FIDO_RATE_EXCHANGE|pcsc_fido_rate_limit_allow_exchange'
+      paths:
+        - src
+        - include
+        - tests
+        - docs
+
+    tap-arm-virtual-key:
+      label: Card-gated tap-to-arm virtual key exposure
+      pattern: 'PCSC_FIDO_VIRTUAL_KEY|PCSC_FIDO_ARM_SEC|pcsc_fido_card_monitor_start|virtual FIDO key armed'
+      paths:
+        - src
+        - include
+        - tests
+        - docs
+
+    u2f-msg:
+      label: CTAPHID MSG / U2F APDU policy
+      pattern: 'PCSC_FIDO_HID_CMD_MSG|U2F MSG APDU'
+      paths:
+        - src
+        - include
+        - tests
+
+fido-apdu:
+  summary: ISO 7816 FIDO APDU translation
+  requirements:
+    fido-aid:
+      label: FIDO AID selection
+      pattern: 'PCSC_FIDO_AID|PCSC_FIDO_APDU_SELECT|pcsc_fido_pack_select_fido_apdu|test_apdu'
+      paths:
+        - src
+        - include
+        - tests
+
+    pcsc-err-formatting:
+      label: Centralized PC/SC bridge error formatting
+      pattern: 'pcsc_fido_format_err|pcsc_fido_set_pcsc_err|\(truncated\)|pcsc_err\.c|test_mem_util'
+      paths:
+        - src
+        - include
+        - tests
+
+    ctap-cbor-apdu:
+      label: CTAP2 CBOR APDU extraction
+      pattern: 'PCSC_FIDO_CTAPHID_CBOR|parse_extended_ctap|parse_short_ctap|APDU GET RESPONSE'
+      paths:
+        - src
+        - include
+        - docs
+        - tests
+
+    response-status:
+      label: PC/SC response status appending
+      pattern: 'pcsc_fido_append_status|PCSC_FIDO_SW_OK_HI'
+      paths:
+        - src
+        - include
+        - tests
+
+    pcsc-nfc-bridge:
+      label: PC/SC NFC FIDO AID and CTAP APDU bridge
+      pattern: 'pcsc_fido_bridge_exchange|pack_ctap2_cbor_apdu|SCardTransmit'
+      paths:
+        - src
+        - include
+
+packaging:
+  summary: Installable pcsc-fido service and package layout
+  requirements:
+    udev:
+      label: uhid and hidraw udev access rules
+      pattern: 'KERNEL=="uhid"|static_node=uhid|TAG\+="uaccess"'
+      paths:
+        - CMakeLists.txt
+        - packaging
+
+    systemd:
+      label: systemd bridge service sandbox
+      pattern: 'ProtectSystem=strict|MemoryDenyWriteExecute=yes|ProcSubset=pid|PrivateNetwork=yes|IPAddressDeny=any|SystemCallFilter=~@resources @privileged @swap|LimitNOFILE=256|TasksMax=32|MemoryMax=256M'
+      paths:
+        - CMakeLists.txt
+        - packaging
+        - README.md
+        - .github/scripts/verify-systemd-unit.sh
+
+    rpm:
+      label: RPM packaging metadata
+      pattern: 'pcsc-fido\.spec|CPACK_RPM_PACKAGE_NAME|%post'
+      paths:
+        - packaging
+        - CMakeLists.txt
+
+    deb:
+      label: Debian packaging metadata
+      pattern: 'debhelper-compat|Package: pcsc-fido|CPACK_DEBIAN_PACKAGE_NAME|postinst'
+      paths:
+        - packaging
+        - CMakeLists.txt
+
+    install-docs:
+      label: Dependency and bridge-service install docs
+      pattern: 'pcsc-lite-devel|libpcsclite-dev|systemctl restart pcsc-fido|build as your normal user|sudo make install|INSTALLATION.md.*NOTICE'
+      paths:
+        - INSTALLATION.md
+        - docs
+
+    production-runtime-deps:
+      label: Production packages declare runtime PC/SC and CCID dependencies
+      pattern: 'pcsc-lite-ccid|libccid|CPACK_DEBIAN_PACKAGE_SHLIBDEPS|pcsc-lite-libs|libpcsclite1|polkitd|polkit'
+      paths:
+        - CMakeLists.txt
+        - packaging
+        - README.md
+        - INSTALLATION.md
+
+    debugging-docs:
+      label: Debugging guide and journal collection workflow
+      pattern: 'DEBUGGING.md|journalctl -u pcsc-fido -u pcscd|/usr/bin/pcsc-fido|pcsc-fido --list-readers|FIDO NFC card left the reader before connect|PC/SC session card no longer present|PC/SC reader name too long|safeguards-for-pcsc-fido-nfc-specific'
+      paths:
+        - CMakeLists.txt
+        - packaging
+        - README.md
+        - docs
+
+    install-automation:
+      label: Source install dependency and post-install automation
+      pattern: 'install-linux-deps|install-post-linux|uninstall-built-tree|stopped pcsc-fido.service before|no systemd units were enabled|systemctl disable --now pcsc-fido'
+      paths:
+        - Makefile
+        - .github/scripts
+
+    sanitizer-tests:
+      label: Sanitizer test build targets
+      pattern: 'make sanitizers|PCSC_FIDO_DEBUG_SANITIZERS|PCSC_FIDO_ENABLE_ASAN|PCSC_FIDO_ENABLE_UBSAN|PCSC_FIDO_ENABLE_TSAN|helper-tsan-probe'
+      paths:
+        - Makefile
+        - CMakeLists.txt
+        - .github/scripts
+        - docs
+
+ci-release:
+  summary: CI package build and release publishing
+  requirements:
+    ci-build-test-lint:
+      label: Build, test, and lint workflow
+      pattern: 'ci-lint\.sh|BUILD_TESTING=ON|ctest'
+      paths:
+        - .github/workflows
+        - .github/scripts
+        - .github/linters
+
+    ci-deb:
+      label: Debian package artifact
+      pattern: 'package-deb|cpack -G DEB|upload-artifact'
+      paths:
+        - .github/workflows
+
+    ci-rpm:
+      label: RPM package artifact
+      pattern: 'package-rpm|cpack -G RPM|upload-artifact'
+      paths:
+        - .github/workflows
+
+    ci-release:
+      label: GitHub release upload
+      pattern: 'gh release|download-artifact'
+      paths:
+        - .github/workflows

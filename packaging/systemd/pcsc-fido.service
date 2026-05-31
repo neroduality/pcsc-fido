@@ -1,0 +1,84 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright (C) 2026 Nero Duality, LLC.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+[Unit]
+Description=PC/SC NFC to FIDO HID bridge
+Documentation=file:/usr/share/doc/pcsc-fido/INSTALLATION.md
+Requires=pcscd.socket
+Wants=polkit.service
+After=pcscd.socket
+After=polkit.service
+After=systemd-udevd.service
+After=systemd-modules-load.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/pcsc-fido
+User=pcsc-fido
+Group=pcsc-fido
+Restart=on-failure
+RestartSec=2s
+LimitNOFILE=256
+TasksMax=32
+MemoryMax=256M
+
+# Process identity and privileges
+NoNewPrivileges=yes
+# Optional host pcscd group membership: ensure-pcsc-fido-user.sh at package install only.
+CapabilityBoundingSet=
+UMask=0077
+PrivateUsers=identity
+KeyringMode=private
+
+# Filesystem and /proc
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectProc=invisible
+ProcSubset=pid
+ProtectHostname=yes
+
+# Kernel and cgroup isolation
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RemoveIPC=yes
+
+# Network: PC/SC client uses AF_UNIX only (/run/pcscd/pcscd.comm)
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+
+# System call filtering
+SystemCallFilter=@system-service
+SystemCallFilter=~@resources @privileged @swap
+SystemCallArchitectures=native
+
+# Bootstrap (no ExecStartPre): lib/modules-load.d/pcsc-fido-uhid.conf loads uhid at boot;
+# packaging/scripts/postinst modprobes and reapplies udev after install/upgrade.
+# /dev/uhid ACLs: 70-pcsc-fido.rules (GROUP=pcsc-fido). Do not use PrivateDevices=yes here.
+
+[Install]
+WantedBy=multi-user.target

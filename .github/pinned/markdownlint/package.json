@@ -1,0 +1,9 @@
+{
+  "name": "pcsc-fido-markdownlint",
+  "private": true,
+  "description": "Hash-pinned markdownlint-cli for OpenSSF Scorecard Pinned-Dependencies",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "markdownlint-cli": "0.48.0"
+  }
+}
