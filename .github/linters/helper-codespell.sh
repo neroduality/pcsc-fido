@@ -35,7 +35,7 @@ set -euo pipefail
 pcsc_fido_codespell_hint() {
   printf '%s\n' \
     'hint: bash .github/scripts/install-linux-deps.sh' \
-    '      or: python3 -m pip install --user "codespell>=2.4.0"' >&2
+    '      or: python3 -m pip install --require-hashes -r .github/pinned/codespell/requirements.txt --user' >&2
 }
 
 pcsc_fido_codespell_supports_multiline_regex() {
@@ -44,6 +44,9 @@ pcsc_fido_codespell_supports_multiline_regex() {
 }
 
 pcsc_fido_ensure_codespell() {
+  local repo_root linter_dir pinned_req
+  local -a pip_args
+
   if pcsc_fido_codespell_supports_multiline_regex; then
     return 0
   fi
@@ -51,7 +54,19 @@ pcsc_fido_ensure_codespell() {
     return 1
   fi
 
-  local -a pip_args=(--ignore-installed --break-system-packages --upgrade 'codespell>=2.4.0')
+  linter_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+  repo_root="$(cd -- "$linter_dir/../.." && pwd)"
+  pinned_req="${repo_root}/.github/pinned/codespell/requirements.txt"
+  if [[ ! -f ${pinned_req} ]]; then
+    return 1
+  fi
+
+  pip_args=(
+    --ignore-installed
+    --break-system-packages
+    --require-hashes
+    -r "${pinned_req}"
+  )
   if [[ ${EUID} -ne 0 ]]; then
     pip_args=(--user "${pip_args[@]}")
     mkdir -p "${HOME}/.local/bin"

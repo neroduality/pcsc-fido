@@ -15,7 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Shared CI entry: build, unit tests, and scan-build.
+# Shared CI entry: Debug unit tests (ASan+UBSan via PCSC_FIDO_DEBUG_SANITIZERS) and scan-build.
 #
 # Usage (from pcsc-fido root):
 #   bash .github/scripts/ci-run-tests.sh
@@ -38,8 +38,18 @@ fi
 
 pcsc_fido_refuse_root_bind_mount_writes
 
-if [[ "$(uname -s)" == "Linux" ]] && [[ ${AUTO_INSTALL_LINUX_DEPS:-1} != "0" ]]; then
-  bash "${repo_root}/.github/scripts/install-linux-deps.sh"
+if [[ "$(uname -s)" == "Linux" ]]; then
+  auto_install_linux_deps="${AUTO_INSTALL_LINUX_DEPS:-}"
+  if [[ -z ${auto_install_linux_deps} ]]; then
+    if [[ ${GITHUB_ACTIONS:-false} == true ]]; then
+      auto_install_linux_deps=1
+    else
+      auto_install_linux_deps=0
+    fi
+  fi
+  if [[ ${auto_install_linux_deps} != "0" ]]; then
+    bash "${repo_root}/.github/scripts/install-linux-deps.sh"
+  fi
 fi
 
 build_dir="${repo_root}/build/ci"

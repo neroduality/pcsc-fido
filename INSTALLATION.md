@@ -98,17 +98,17 @@ Install build/runtime dependencies for the source tree:
 Fedora/RHEL:
 
 ```bash
-sudo dnf install -y cmake gcc make pkgconf-pkg-config pcsc-lite pcsc-lite-devel pcsc-lite-ccid pcsc-tools systemd udev libasan libubsan libtsan
+sudo dnf install -y cmake gcc make pkgconf-pkg-config pcsc-lite pcsc-lite-devel pcsc-lite-ccid pcsc-tools systemd udev libasan libubsan libtsan valgrind
 ```
 
 Debian/Ubuntu:
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y cmake gcc make pkg-config pcscd libpcsclite-dev libccid pcsc-tools systemd udev libasan8 libubsan1 libtsan2 nodejs npm shfmt
+sudo apt-get install -y cmake gcc make pkg-config pcscd libpcsclite-dev libccid pcsc-tools systemd udev libasan8 libubsan1 libtsan2 valgrind nodejs npm shfmt
 ```
 
-Build and verify as your normal user:
+Build and verify as your normal user. Install the packages above manually, or run `make deps` once to bootstrap them via apt/dnf. Plain `make` does not install packages; prefix a command with `INSTALL_DEPS=1` to auto-install only what that target needs (for example, `INSTALL_DEPS=1 make verify`):
 
 ```bash
 make help
@@ -119,9 +119,6 @@ make test
 make verify
 ...
 ```
-
-These make targets bootstrap missing Linux build/test/lint dependencies by default. Use
-`INSTALL_DEPS=0` to skip that check when you want a fully offline/no-sudo run.
 
 Install into `/usr`:
 
@@ -213,10 +210,8 @@ pcsc-fido --list-readers    # PC/SC readers visible to pcscd
 
 ## Local package builds
 
-Use [RELEASE.md](RELEASE.md) for the full release matrix. Common local commands:
-
 ```bash
-make package
+INSTALL_DEPS=1 make package    # CPack in build/ (TGZ; DEB/RPM when tools present)
 make ci-suite CI_SUITE_FLAGS=--release
 make ci-suite CI_SUITE_FLAGS="--release-arch riscv64"
 bash .github/scripts/run-local-release-packages.sh --all

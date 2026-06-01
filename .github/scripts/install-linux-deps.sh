@@ -20,8 +20,13 @@
 # Usage: bash .github/scripts/install-linux-deps.sh
 #
 # Environment:
-#   AUTO_INSTALL_LINUX_DEPS=0   skip package install (default for local make ci-suite)
+#   AUTO_INSTALL_LINUX_DEPS=0   skip package install (default for local make; CI sets 1)
 #   PCSC_FIDO_ALLOW_SUDO_DEPS=1 allow sudo apt/dnf when not root (local opt-in; auto in GITHUB_ACTIONS)
+#   PCSC_FIDO_DEPS_SCOPE=build|package|verify|full
+#     build   — compile/test deps (make build/test)
+#     package — build + native CPack tools (make package)
+#     verify  — build + sanitizer runtime + valgrind (make verify/valgrind)
+#     full    — lint/CI toolchain (default when unset; make lint/deps)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -47,6 +52,40 @@ if [[ ${AUTO_INSTALL_LINUX_DEPS:-1} == "0" ]]; then
 fi
 
 have() { command -v "$1" >/dev/null 2>&1; }
+
+pcsc_fido_deps_scope() {
+  case "${PCSC_FIDO_DEPS_SCOPE:-full}" in
+    build | package | verify | full) printf '%s' "${PCSC_FIDO_DEPS_SCOPE:-full}" ;;
+    *)
+      printf 'error: PCSC_FIDO_DEPS_SCOPE must be build, package, verify, or full (got %s)\n' \
+        "${PCSC_FIDO_DEPS_SCOPE}" >&2
+      return 1
+      ;;
+  esac
+}
+
+pcsc_fido_verify_gcc_min() {
+  if ! have gcc; then
+    return 0
+  fi
+  gcc_major="$(gcc -dumpversion | cut -d. -f1)"
+  if [[ ${gcc_major} -lt 13 ]]; then
+    printf 'error: GCC 13+ required for ISO C23 (found GCC %s)\n' "$(gcc -dumpversion)" >&2
+    return 1
+  fi
+}
+
+pcsc_fido_build_tools_ok() {
+  have cmake && have gcc && have make && have pkg-config && pkg-config --exists libpcsclite
+}
+
+pcsc_fido_package_tools_ok() {
+  pcsc_fido_build_tools_ok && { have dpkg-deb || have rpmbuild; }
+}
+
+pcsc_fido_verify_tools_ok() {
+  pcsc_fido_build_tools_ok && have valgrind
+}
 
 scan_build_ok() {
   local v p
@@ -74,7 +113,7 @@ as_root() {
   else
     printf 'error: package install requires root or passwordless sudo\n' >&2
     printf 'hint: run once: sudo bash .github/scripts/install-linux-deps.sh\n' >&2
-    printf '      or:   make deps INSTALL_DEPS=1 PCSC_FIDO_ALLOW_SUDO_DEPS=1\n' >&2
+    printf '      or:   make deps PCSC_FIDO_ALLOW_SUDO_DEPS=1\n' >&2
     return 1
   fi
 }
@@ -194,11 +233,30 @@ install_markdownlint() {
   return 1
 }
 
-if pcsc_fido_host_tools_ok; then
+deps_scope="$(pcsc_fido_deps_scope)"
+
+if [[ ${deps_scope} == build ]] && pcsc_fido_build_tools_ok; then
+  pcsc_fido_verify_gcc_min
+  printf '── install-linux-deps: build tools already present ──\n'
+  exit 0
+fi
+
+if [[ ${deps_scope} == package ]] && pcsc_fido_package_tools_ok; then
+  pcsc_fido_verify_gcc_min
+  printf '── install-linux-deps: package tools already present ──\n'
+  exit 0
+fi
+
+if [[ ${deps_scope} == verify ]] && pcsc_fido_verify_tools_ok; then
+  pcsc_fido_verify_gcc_min
+  printf '── install-linux-deps: verify tools already present ──\n'
+  exit 0
+fi
+
+if [[ ${deps_scope} == full ]] && pcsc_fido_host_tools_ok; then
   install_cppcheck || true
   install_codespell || true
   install_markdownlint || true
-  install_libfuzzer_runtime || true
   printf '── install-linux-deps: host tools already present ──\n'
   exit 0
 fi
@@ -207,11 +265,114 @@ if [[ ${EUID} -ne 0 ]] && ! pcsc_fido_may_use_sudo_for_deps && ! pcsc_fido_can_s
   printf 'error: missing build/CI tools and non-interactive sudo is unavailable\n' >&2
   printf 'install once (requires root):\n' >&2
   printf '  sudo bash .github/scripts/install-linux-deps.sh\n' >&2
-  printf 'or on Fedora/RHEL:\n' >&2
-  printf '  sudo dnf install cmake gcc make pkg-config pcsc-lite-devel clang-analyzer clang-tools-extra lcov valgrind\n' >&2
-  printf 'or on Debian/Ubuntu:\n' >&2
-  printf '  sudo apt-get install cmake gcc make pkg-config libpcsclite-dev clang-tools lcov valgrind nodejs npm shfmt libclang-rt-*-dev\n' >&2
+  if [[ ${deps_scope} == build ]]; then
+    printf 'or on Fedora/RHEL:\n' >&2
+    printf '  sudo dnf install cmake gcc make pkg-config pcsc-lite-devel libasan libubsan\n' >&2
+    printf 'or on Debian/Ubuntu:\n' >&2
+    printf '  sudo apt-get install cmake gcc make pkg-config libpcsclite-dev libasan8 libubsan1\n' >&2
+  elif [[ ${deps_scope} == package ]]; then
+    printf 'or on Fedora/RHEL:\n' >&2
+    printf '  sudo dnf install cmake gcc make pkg-config pcsc-lite-devel libasan libubsan rpm-build\n' >&2
+    printf 'or on Debian/Ubuntu:\n' >&2
+    printf '  sudo apt-get install cmake gcc make pkg-config libpcsclite-dev libasan8 libubsan1 dpkg-dev debhelper\n' >&2
+  elif [[ ${deps_scope} == verify ]]; then
+    printf 'or on Fedora/RHEL:\n' >&2
+    printf '  sudo dnf install cmake gcc make pkg-config pcsc-lite-devel libasan libubsan libtsan valgrind\n' >&2
+    printf 'or on Debian/Ubuntu:\n' >&2
+    printf '  sudo apt-get install cmake gcc make pkg-config libpcsclite-dev libasan8 libubsan1 libtsan2 valgrind\n' >&2
+  else
+    printf 'or on Fedora/RHEL:\n' >&2
+    printf '  sudo dnf install cmake gcc make pkg-config pcsc-lite-devel clang-analyzer clang-tools-extra lcov valgrind\n' >&2
+    printf 'or on Debian/Ubuntu:\n' >&2
+    printf '  sudo apt-get install cmake gcc make pkg-config libpcsclite-dev clang-tools lcov valgrind nodejs npm shfmt libclang-rt-*-dev\n' >&2
+  fi
   exit 1
+fi
+
+if [[ ${deps_scope} == build ]]; then
+  if command -v dnf >/dev/null 2>&1; then
+    as_root dnf install -y \
+      cmake gcc make pkgconf-pkg-config pcsc-lite pcsc-lite-devel \
+      libasan libubsan
+  elif command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    as_root apt-get update
+    as_root apt-get install -y \
+      cmake gcc make pkg-config libpcsclite-dev
+    as_root apt-get install -y libasan8 2>/dev/null || as_root apt-get install -y libasan6 2>/dev/null || true
+    as_root apt-get install -y libubsan2 2>/dev/null || as_root apt-get install -y libubsan1 2>/dev/null || true
+  else
+    echo "Unsupported package manager; install cmake, gcc, make, pkg-config, libpcsclite-dev." >&2
+    exit 1
+  fi
+  if have gcc; then
+    printf '── install-linux-deps: %s ──\n' "$(gcc --version | head -n1)"
+  fi
+  pcsc_fido_verify_gcc_min
+  printf '── install-linux-deps: build tools ready ──\n'
+  exit 0
+fi
+
+if [[ ${deps_scope} == package ]]; then
+  if ! pcsc_fido_build_tools_ok; then
+    if command -v dnf >/dev/null 2>&1; then
+      as_root dnf install -y \
+        cmake gcc make pkgconf-pkg-config pcsc-lite pcsc-lite-devel \
+        libasan libubsan
+    elif command -v apt-get >/dev/null 2>&1; then
+      export DEBIAN_FRONTEND=noninteractive
+      as_root apt-get update
+      as_root apt-get install -y \
+        cmake gcc make pkg-config libpcsclite-dev
+      as_root apt-get install -y libasan8 2>/dev/null || as_root apt-get install -y libasan6 2>/dev/null || true
+      as_root apt-get install -y libubsan2 2>/dev/null || as_root apt-get install -y libubsan1 2>/dev/null || true
+    else
+      echo "Unsupported package manager; install cmake, gcc, make, pkg-config, libpcsclite-dev." >&2
+      exit 1
+    fi
+  fi
+  if ! have dpkg-deb && ! have rpmbuild; then
+    if command -v dnf >/dev/null 2>&1; then
+      as_root dnf install -y rpm-build
+    elif command -v apt-get >/dev/null 2>&1; then
+      export DEBIAN_FRONTEND=noninteractive
+      as_root apt-get install -y dpkg-dev debhelper
+    else
+      printf 'error: install dpkg-deb or rpmbuild for CPack .deb/.rpm output\n' >&2
+      exit 1
+    fi
+  fi
+  if have gcc; then
+    printf '── install-linux-deps: %s ──\n' "$(gcc --version | head -n1)"
+  fi
+  pcsc_fido_verify_gcc_min
+  printf '── install-linux-deps: package tools ready ──\n'
+  exit 0
+fi
+
+if [[ ${deps_scope} == verify ]]; then
+  if command -v dnf >/dev/null 2>&1; then
+    as_root dnf install -y \
+      cmake gcc make pkgconf-pkg-config pcsc-lite pcsc-lite-devel \
+      libasan libubsan libtsan valgrind
+  elif command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    as_root apt-get update
+    as_root apt-get install -y \
+      cmake gcc make pkg-config libpcsclite-dev valgrind
+    as_root apt-get install -y libasan8 2>/dev/null || as_root apt-get install -y libasan6 2>/dev/null || true
+    as_root apt-get install -y libubsan2 2>/dev/null || as_root apt-get install -y libubsan1 2>/dev/null || true
+    as_root apt-get install -y libtsan2 2>/dev/null || as_root apt-get install -y libtsan0 2>/dev/null || true
+  else
+    echo "Unsupported package manager; install cmake, gcc, make, pkg-config, libpcsclite-dev, valgrind." >&2
+    exit 1
+  fi
+  if have gcc; then
+    printf '── install-linux-deps: %s ──\n' "$(gcc --version | head -n1)"
+  fi
+  pcsc_fido_verify_gcc_min
+  printf '── install-linux-deps: verify tools ready ──\n'
+  exit 0
 fi
 
 if command -v dnf >/dev/null 2>&1; then
@@ -256,11 +417,7 @@ fi
 
 if have gcc; then
   printf '── install-linux-deps: %s ──\n' "$(gcc --version | head -n1)"
-  gcc_major="$(gcc -dumpversion | cut -d. -f1)"
-  if [[ ${gcc_major} -lt 13 ]]; then
-    printf 'error: GCC 13+ required for ISO C23 (found GCC %s)\n' "$(gcc -dumpversion)" >&2
-    exit 1
-  fi
 fi
+pcsc_fido_verify_gcc_min
 
 printf '── install-linux-deps: complete ──\n'

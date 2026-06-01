@@ -52,6 +52,7 @@ jobs:
 
       - name: Install dependencies
         env:
+          AUTO_INSTALL_LINUX_DEPS: 1
           PCSC_FIDO_ALLOW_SUDO_DEPS: 1
         run: bash .github/scripts/install-linux-deps.sh
 

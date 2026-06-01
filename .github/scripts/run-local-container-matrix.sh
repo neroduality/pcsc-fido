@@ -15,7 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Debian + Fedora container matrix (unit tests + scan-build). Part of ``--main`` in
+# Debian + Fedora container matrix (Debug unit tests + scan-build). Part of ``--main`` in
 # run-local-ci-suite.sh; runnable alone when you only want the matrix.
 #
 # Usage:

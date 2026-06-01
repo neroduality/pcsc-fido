@@ -74,6 +74,24 @@ pcsc_fido_ensure_markdownlint() {
     return 0
   fi
 
+  if pcsc_fido_node_bin; then
+    node_bin="${PCSC_FIDO_NODE_BIN}"
+
+    if pcsc_fido_markdownlint_js_ok "${js_entry}" "${node_bin}"; then
+      PCSC_FIDO_MARKDOWNLINT_MODE=js
+      PCSC_FIDO_MARKDOWNLINT_JS="${js_entry}"
+      return 0
+    fi
+
+    if [[ -x ${local_bin} ]] && head -n1 "${local_bin}" | grep -q '^#!.*node'; then
+      if "${node_bin}" "${local_bin}" --version >/dev/null 2>&1; then
+        PCSC_FIDO_MARKDOWNLINT="${local_bin}"
+        PCSC_FIDO_MARKDOWNLINT_MODE=bin
+        return 0
+      fi
+    fi
+  fi
+
   if command -v npm >/dev/null 2>&1 && [[ -f ${pinned_npm}/package-lock.json ]]; then
     # Local container CI runs install-linux-deps as root on a bind mount; npm ci there
     # root-owns node_modules and breaks host lint. Use host-installed bundle instead.

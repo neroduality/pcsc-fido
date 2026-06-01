@@ -1,0 +1,4 @@
+# Hash-pinned codespell for OpenSSF Scorecard Pinned-Dependencies.
+# Regenerate hashes: pip download codespell==VERSION -d /tmp/w && pip hash /tmp/w/*.whl
+codespell==2.4.2 \
+    --hash=sha256:97e0c1060cf46bd1d5db89a936c98db8c2b804e1fdd4b5c645e82a1ec6b1f886

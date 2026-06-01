@@ -24,7 +24,7 @@
 #
 # Standalone pieces (also invoked by presets above):
 #   run-local-spec-coverage.sh      checklist symbol gate
-#   run-local-container-matrix.sh   Debian + Fedora tests + scan-build
+#   run-local-container-matrix.sh   Debian + Fedora Debug tests + scan-build
 #   run-local-line-coverage.sh      gcov/lcov HTML
 #   run-local-release-packages.sh   Release .deb/.rpm into dist/
 #   run-local-openssf.sh            OpenSSF Scorecard

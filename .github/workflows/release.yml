@@ -46,6 +46,7 @@ jobs:
 
       - name: Install dependencies
         env:
+          AUTO_INSTALL_LINUX_DEPS: 1
           PCSC_FIDO_ALLOW_SUDO_DEPS: 1
         run: bash .github/scripts/install-linux-deps.sh
 
@@ -71,6 +72,7 @@ jobs:
 
       - name: Build DEB
         env:
+          AUTO_INSTALL_LINUX_DEPS: 1
           PCSC_FIDO_ALLOW_SUDO_DEPS: 1
         run: bash .github/scripts/release-build-package.sh --format deb --arch "${{ matrix.arch }}"
 
@@ -96,6 +98,7 @@ jobs:
 
       - name: Build DEB
         env:
+          AUTO_INSTALL_LINUX_DEPS: 1
           PCSC_FIDO_ALLOW_SUDO_DEPS: 1
         run: bash .github/scripts/release-build-package.sh --format deb --arch "${{ matrix.arch }}" --cross
 
@@ -123,6 +126,7 @@ jobs:
 
       - name: Build RPM
         env:
+          AUTO_INSTALL_LINUX_DEPS: 1
           PCSC_FIDO_ALLOW_SUDO_DEPS: 1
         run: bash .github/scripts/release-build-package.sh --format rpm --arch "${{ matrix.arch }}"
 
@@ -148,6 +152,7 @@ jobs:
 
       - name: Build RPM
         env:
+          AUTO_INSTALL_LINUX_DEPS: 1
           PCSC_FIDO_ALLOW_SUDO_DEPS: 1
         run: bash .github/scripts/release-build-package.sh --format rpm --arch "${{ matrix.arch }}" --cross
 

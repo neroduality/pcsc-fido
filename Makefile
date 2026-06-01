@@ -21,11 +21,12 @@ CMAKE_BUILD_TYPE ?= Debug
 INSTALL_PREFIX ?= /usr
 INSTALL_BUILD_TYPE ?= Release
 LINT_FLAGS ?=
-INSTALL_DEPS ?= 1
+INSTALL_DEPS ?= 0
+PCSC_FIDO_DEPS_SCOPE ?= full
 
 .DEFAULT_GOAL := all
 
-.PHONY: all build debug test verify asan ubsan valgrind tsan sanitizers sanitiziers lint security-lint ci-suite ci-suite-help deps maybe-deps install install-debug post-install uninstall package package-release-deb clean help refuse-root ensure-build-owner fuzz
+.PHONY: all build debug test verify asan ubsan valgrind tsan sanitizers sanitiziers lint security-lint ci-suite ci-suite-help deps maybe-deps install install-debug post-install uninstall package clean help refuse-root ensure-build-owner fuzz
 
 # Build/test targets must not run as root — keeps build/ user-owned.
 refuse-root:
@@ -35,6 +36,16 @@ ensure-build-owner: refuse-root
 	@bash "$(CURDIR)/.github/scripts/helper-ensure-build-tree-owner.sh" $(BUILD_TREES)
 
 all: build
+
+build: PCSC_FIDO_DEPS_SCOPE=build
+debug: PCSC_FIDO_DEPS_SCOPE=build
+test: PCSC_FIDO_DEPS_SCOPE=build
+asan: PCSC_FIDO_DEPS_SCOPE=build
+ubsan: PCSC_FIDO_DEPS_SCOPE=build
+valgrind: PCSC_FIDO_DEPS_SCOPE=verify
+tsan: PCSC_FIDO_DEPS_SCOPE=build
+lint: PCSC_FIDO_DEPS_SCOPE=full
+verify: PCSC_FIDO_DEPS_SCOPE=verify
 
 build: ensure-build-owner maybe-deps
 	@cmake -S . -B "$(BUILD_DIR)" -DCMAKE_BUILD_TYPE="$(CMAKE_BUILD_TYPE)" \
@@ -66,7 +77,7 @@ ubsan: ensure-build-owner maybe-deps
 
 valgrind: ensure-build-owner maybe-deps
 	@if ! command -v valgrind >/dev/null 2>&1; then \
-	  printf 'error: valgrind not found (install via: make deps INSTALL_DEPS=1)\n' >&2; \
+	  printf 'error: valgrind not found (install via: make deps or INSTALL_DEPS=1 make verify)\n' >&2; \
 	  exit 1; \
 	fi
 	@cmake -S . -B "$(BUILD_DIR)-valgrind" -DCMAKE_BUILD_TYPE=Debug -DCMAKE_INSTALL_PREFIX="$(INSTALL_PREFIX)" \
@@ -74,7 +85,12 @@ valgrind: ensure-build-owner maybe-deps
 	@cmake --build "$(BUILD_DIR)-valgrind" --target pcsc_fido_unit_tests -j$$(nproc 2>/dev/null || echo 2)
 	@ctest --test-dir "$(BUILD_DIR)-valgrind" -T memcheck --output-on-failure
 
-verify: test asan ubsan tsan valgrind
+verify: ensure-build-owner maybe-deps
+	@$(MAKE) test INSTALL_DEPS=0
+	@$(MAKE) asan INSTALL_DEPS=0
+	@$(MAKE) ubsan INSTALL_DEPS=0
+	@$(MAKE) tsan INSTALL_DEPS=0
+	@$(MAKE) valgrind INSTALL_DEPS=0
 
 tsan: ensure-build-owner maybe-deps
 	@tsan_mode=$$(bash "$(CURDIR)/.github/scripts/helper-tsan-probe.sh"); \
@@ -112,16 +128,21 @@ ci-suite-help:
 	@bash .github/scripts/run-local-ci-suite.sh --help
 
 deps:
-	@PCSC_FIDO_ALLOW_SUDO_DEPS=1 AUTO_INSTALL_LINUX_DEPS="$(INSTALL_DEPS)" \
+	@PCSC_FIDO_ALLOW_SUDO_DEPS=1 AUTO_INSTALL_LINUX_DEPS=1 \
+	  PCSC_FIDO_DEPS_SCOPE="$(PCSC_FIDO_DEPS_SCOPE)" \
 	  bash .github/scripts/install-linux-deps.sh
 
 maybe-deps:
-	@if [ "$(INSTALL_DEPS)" != "0" ]; then $(MAKE) deps INSTALL_DEPS="$(INSTALL_DEPS)"; fi
+	@if [ "$(INSTALL_DEPS)" != "0" ]; then \
+	  $(MAKE) deps INSTALL_DEPS="$(INSTALL_DEPS)" PCSC_FIDO_DEPS_SCOPE="$(PCSC_FIDO_DEPS_SCOPE)"; \
+	fi
 
 # Install: stage a Release pcsc-fido binary into the prefix (no unit tests). Rebuild runs as
 # the build/ owner, not root. Run `make test` separately before install when you want tests.
 install:
-	@if [ "$(INSTALL_DEPS)" != "0" ]; then $(MAKE) deps INSTALL_DEPS="$(INSTALL_DEPS)"; fi
+	@if [ "$(INSTALL_DEPS)" != "0" ]; then \
+	  $(MAKE) deps INSTALL_DEPS="$(INSTALL_DEPS)" PCSC_FIDO_DEPS_SCOPE=build; \
+	fi
 	@BUILD_DIR="$(BUILD_DIR)" INSTALL_PREFIX="$(INSTALL_PREFIX)" INSTALL_BUILD_TYPE="$(INSTALL_BUILD_TYPE)" \
 	  bash "$(CURDIR)/.github/scripts/install-built-tree.sh"
 	@$(MAKE) post-install INSTALL_BUILD_TYPE="$(INSTALL_BUILD_TYPE)"
@@ -144,11 +165,12 @@ uninstall:
 	@BUILD_DIR="$(BUILD_DIR)" INSTALL_PREFIX="$(INSTALL_PREFIX)" \
 	  bash "$(CURDIR)/.github/scripts/uninstall-built-tree.sh"
 
-package: build
+package:
+	@$(MAKE) build INSTALL_DEPS="$(INSTALL_DEPS)" PCSC_FIDO_DEPS_SCOPE=package
+	@if ! command -v dpkg-deb >/dev/null 2>&1 && ! command -v rpmbuild >/dev/null 2>&1; then \
+	  printf 'warning: neither dpkg-deb nor rpmbuild found; CPack emits TGZ only (install via: make deps)\n' >&2; \
+	fi
 	@cmake --build "$(BUILD_DIR)" --target package
-
-package-release-deb:
-	@bash .github/scripts/release-build-package.sh --format deb --arch amd64
 
 clean: refuse-root
 	@bash .github/scripts/helper-clean-build-tree.sh $(BUILD_TREES)
@@ -163,14 +185,15 @@ help:
 	  '  sudo make uninstall       Strictly purge source install only (use dnf/apt remove for release packages)' \
 	  '  make test                 Run unit tests (plain build)' \
 	  '  make fuzz                 Local libFuzzer (FUZZ_SECONDS=180 default; FUZZ_FLAGS for script opts)' \
-	  '  make verify               Full verification: plain, ASan, UBSan, TSan, Valgrind' \
+	  '  make verify               Full verification: plain, ASan, UBSan, TSan, Valgrind (needs valgrind)' \
 	  '  make lint                 Format, spec coverage, shell, spelling, build, tests, cppcheck' \
 	  '  make security-lint        License headers, zizmor, supply-chain, and secret scans' \
 	  '  make ci-suite             Local CI replay (CI_SUITE_FLAGS; default --quick)' \
-	  '  make package              CPack TGZ/DEB/RPM when supported' \
+	  '  make package              CPack TGZ/DEB/RPM (TGZ always; .deb/.rpm need dpkg-deb or rpmbuild)' \
 	  '  make clean                Remove build/, build-*, .fuzz, scan-build-report (not dist/)' \
+	  '  make deps                 Install Linux build/test/lint deps (run once on new machines)' \
 	  '' \
 	  'ci-suite flags (make ci-suite-help): --quick --main --full --coverage --release --all-release --release-arch --security --openssf' \
 	  '  example: make ci-suite CI_SUITE_FLAGS="--release-arch riscv64"' \
 	  '' \
-	  'Variables: INSTALL_DEPS=0 skips automatic Linux dependency bootstrap; BUILD_DIR, INSTALL_PREFIX, INSTALL_BUILD_TYPE'
+	  'Variables: INSTALL_DEPS=1 auto-runs make deps before build/test/package/verify (default 0); PCSC_FIDO_DEPS_SCOPE=build|package|verify|full; BUILD_DIR, INSTALL_PREFIX, INSTALL_BUILD_TYPE'

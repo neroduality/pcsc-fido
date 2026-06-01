@@ -119,7 +119,7 @@ if [[ $(id -u) -eq 0 && -n ${HOST_UID:-} && ${PCSC_FIDO_CI_AS_USER:-0} != 1 ]]; 
   else
     bash "${SCRIPT_DIR}/install-linux-deps.sh"
   fi
-  if [[ $FORMAT == "rpm" ]] && command -v apt-get >/dev/null 2>&1; then
+  if [[ $FORMAT == "rpm" ]] && command -v apt-get >/dev/null 2>&1 && ! command -v rpmbuild >/dev/null 2>&1; then
     export DEBIAN_FRONTEND=noninteractive
     apt-get install -y rpm
   fi
@@ -131,16 +131,6 @@ if [[ $(id -u) -eq 0 && -n ${HOST_UID:-} && ${PCSC_FIDO_CI_AS_USER:-0} != 1 ]]; 
 fi
 
 pcsc_fido_refuse_root_bind_mount_writes
-
-if [[ $FORMAT == "rpm" ]] && command -v apt-get >/dev/null 2>&1 && ! command -v rpmbuild >/dev/null 2>&1; then
-  if [[ ${EUID} -eq 0 ]]; then
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get install -y rpm
-  else
-    printf 'error: rpmbuild missing; install rpm package or run in container\n' >&2
-    exit 1
-  fi
-fi
 
 CMAKE_ARGS=(
   -S "$ROOT"
@@ -163,6 +153,16 @@ if [[ $CROSS -eq 1 ]]; then
 elif [[ ${AUTO_INSTALL_LINUX_DEPS:-1} != "0" ]]; then
   bash "${SCRIPT_DIR}/install-linux-deps.sh"
   CMAKE_ARGS+=(-DBUILD_TESTING=ON)
+fi
+
+if [[ $FORMAT == "rpm" ]] && command -v apt-get >/dev/null 2>&1 && ! command -v rpmbuild >/dev/null 2>&1; then
+  if [[ ${EUID} -eq 0 ]]; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get install -y rpm
+  else
+    printf 'error: rpmbuild missing; install rpm package or run in container\n' >&2
+    exit 1
+  fi
 fi
 
 cmake "${CMAKE_ARGS[@]}"

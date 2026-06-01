@@ -14,7 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Host-side CI on linux/amd64 GitHub runners: lint gate, then matrix of distro containers.
+# Host-side CI on linux/amd64 GitHub runners: lint gate, then matrix of distro containers
+# (Debug unit tests + scan-build per container).
 # Local reproduction: make ci-suite CI_SUITE_FLAGS=--main; see .github/WORKFLOWS.md
 name: Main CI
 
@@ -65,6 +66,7 @@ jobs:
 
       - name: Install lint and build dependencies
         env:
+          AUTO_INSTALL_LINUX_DEPS: 1
           PCSC_FIDO_ALLOW_SUDO_DEPS: 1
         run: bash .github/scripts/install-linux-deps.sh
 
@@ -111,7 +113,9 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Unit tests + scan-build
+      - name: Debug unit tests + scan-build
+        env:
+          AUTO_INSTALL_LINUX_DEPS: 1
         run: bash .github/scripts/ci-run-tests.sh
 
       - name: Stage scan-build artifact
