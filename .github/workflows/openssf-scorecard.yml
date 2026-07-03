@@ -24,8 +24,8 @@ name: OpenSSF Scorecard
 
 on:
   schedule:
-    # Weekly — Saturdays 01:30 UTC (matches upstream default cadence).
-    - cron: "30 1 * * 6"
+    # Monthly — 1st of month 01:30 UTC.
+    - cron: "30 1 1 * *"
   workflow_dispatch:
 
 permissions:

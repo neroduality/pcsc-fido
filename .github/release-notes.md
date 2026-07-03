@@ -23,7 +23,9 @@ limitations under the License.
 
 <!-- Optional per-release notes below. CI publishes this template as-is when no release-specific notes are added. -->
 
-**Notice:** Development is heavily AI-assisted — we deliberately leverage AI and automation for code generation, backed by human review and hardware testing (see [Contributing](https://github.com/neroduality/pcsc-fido/blob/@TAG@/README.md#contributing) in the README). This release is in early development and is not yet production battle-tested.
+Git history contains detailed changes. Includes general improvements and capability updates.
+
+**Notice:** AI-assisted, human-reviewed, and hardware-tested. Source-only development firmware.
 
 <!-- Per-release changes (optional):
 

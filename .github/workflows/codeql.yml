@@ -21,7 +21,8 @@ name: CodeQL
 
 on:
   schedule:
-    - cron: "32 6 * * 2"
+    # Quarterly — 1st of Jan/Apr/Jul/Oct at 06:32 UTC.
+    - cron: "32 6 1 1,4,7,10 *"
   workflow_dispatch:
 
 concurrency:

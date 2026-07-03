@@ -20,7 +20,8 @@ name: Supply chain (Syft + Grype)
 
 on:
   schedule:
-    - cron: "18 7 * * 3"
+    # Quarterly — 1st of Jan/Apr/Jul/Oct at 22:18 UTC.
+    - cron: "18 22 1 1,4,7,10 *"
   workflow_dispatch:
 
 permissions:
