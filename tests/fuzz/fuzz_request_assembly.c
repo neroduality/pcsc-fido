@@ -20,9 +20,10 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include "pcsc_fido/mem_util.h"
 
-static void noop_handler(const void *ctx, uint32_t request_cid, uint8_t cmd,
-                         const uint8_t *payload, size_t payload_len) {
+static void noop_handler(const void* ctx, uint32_t request_cid, uint8_t cmd,
+                         const uint8_t* payload, size_t payload_len) {
   (void)ctx;
   (void)request_cid;
   (void)cmd;
@@ -30,11 +31,10 @@ static void noop_handler(const void *ctx, uint32_t request_cid, uint8_t cmd,
   (void)payload_len;
 }
 
-int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
+int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   pcsc_fido_daemon_pending_request_t pending;
-  uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE];
 
-  if (data == nullptr) {
+  if (data == PCSC_FIDO_NULL) {
     return 0;
   }
 
@@ -42,15 +42,19 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
   for (size_t off = 0u; off + PCSC_FIDO_HID_PACKET_SIZE <= size;
        off += PCSC_FIDO_HID_PACKET_SIZE) {
-    (void)pcsc_fido_daemon_request_assembler_feed(-1, &pending, data + off, noop_handler, nullptr);
+    (void)pcsc_fido_daemon_request_assembler_feed(-1, &pending, data + off,
+                                                  noop_handler, PCSC_FIDO_NULL);
   }
 
   {
     const size_t tail = size % PCSC_FIDO_HID_PACKET_SIZE;
     if (tail != 0u) {
-      memset(packet, 0, sizeof(packet));
-      memcpy(packet, data + (size - tail), tail);
-      (void)pcsc_fido_daemon_request_assembler_feed(-1, &pending, packet, noop_handler, nullptr);
+      uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE];
+      pcsc_fido_zero_bytes(packet, sizeof(packet));
+      (void)pcsc_fido_copy_bytes(packet, sizeof(packet), 0u,
+                                 data + (size - tail), tail);
+      (void)pcsc_fido_daemon_request_assembler_feed(
+          -1, &pending, packet, noop_handler, PCSC_FIDO_NULL);
     }
   }
 

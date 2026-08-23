@@ -43,4 +43,4 @@ fi
   sha256sum "${files[@]}" >SHA256SUMS
 )
 
-printf '── helper-release-sha256sums: %s (%s files) ──\n' "${DIST_DIR}/SHA256SUMS" "${#files[@]}"
+printf -- '-- helper-release-sha256sums: %s (%s files) --\n' "${DIST_DIR}/SHA256SUMS" "${#files[@]}"

@@ -18,8 +18,8 @@
 # Install a production build into the system prefix.
 #
 # Flow:
-#   1. ``make`` / ``make test`` (normal user) — optional dev build in build/
-#   2. ``sudo make install`` — ensures INSTALL_BUILD_TYPE (default Release) with
+#   1. ``make`` / ``make test`` (normal user) -- optional dev build in build/
+#   2. ``sudo make install`` -- ensures INSTALL_BUILD_TYPE (default Release) with
 #      BUILD_TESTING=OFF, builds only ``pcsc-fido``, stages with DESTDIR, rsyncs into
 #      /usr, reloads udev/systemd metadata only (stops running bridge first; does not enable/start any unit)
 #

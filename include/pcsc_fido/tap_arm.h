@@ -19,4 +19,5 @@
 #include "pcsc_fido/attrs.h"
 #include "pcsc_fido/daemon_config.h"
 
-PCSC_FIDO_NODISCARD int pcsc_fido_tap_arm_run(int uhid_fd, const pcsc_fido_browser_config_t *cfg);
+PCSC_FIDO_NODISCARD int pcsc_fido_tap_arm_run(
+    int uhid_fd, const pcsc_fido_browser_config_t* cfg);

@@ -17,41 +17,41 @@
 
 # Run zizmor (GitHub Actions static analysis) against this repository checkout.
 #
-# CI runs the same audit as `.github/workflows/zizmor.yml` (workflow_dispatch only).
+# CI runs the same audit as `.github/workflows/zizmor_actionlint.yml` (workflow_dispatch only).
 #
 # Prefers a host `zizmor` on PATH when present; otherwise uses Docker or Podman with the official
 # ghcr.io/zizmorcore/zizmor image. Script flags must come before any zizmor CLI flags.
 #
 # Usage (from anywhere):
-#   bash /path/to/repo/.github/scripts/run-local-zizmor.sh
-#   bash .../run-local-zizmor.sh --pedantic
-#   bash .../run-local-zizmor.sh --container --offline
-#   bash .../run-local-zizmor.sh --format sarif > /tmp/zizmor.sarif
-#   CONTAINER_ENGINE=podman bash .../run-local-zizmor.sh
+#   bash /path/to/repo/.github/scripts/run-zizmor-locally.sh
+#   bash .../run-zizmor-locally.sh --pedantic
+#   bash .../run-zizmor-locally.sh --container --offline
+#   bash .../run-zizmor-locally.sh --format sarif > /tmp/zizmor.sarif
+#   CONTAINER_ENGINE=podman bash .../run-zizmor-locally.sh
 #
 set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Run zizmor locally against this repository root (directory containing `.github/`).
+Run zizmor locally against this repository's GitHub workflow and action files.
 
 Uses `zizmor` on PATH when available unless `--container` is set. Otherwise runs the official
 container image (Docker or Podman).
 
-Requires: zizmor — or docker/podman for `--container` / auto fallback.
+Requires: zizmor -- or docker/podman for `--container` / auto fallback.
 
 Usage:
-  bash /path/to/repo/.github/scripts/run-local-zizmor.sh [script-options] [zizmor-args...]
+  bash /path/to/repo/.github/scripts/run-zizmor-locally.sh [script-options] [zizmor-args...]
 
 Script options (must appear before zizmor flags):
   --container      Always run via Docker/Podman (ignore host zizmor).
   --host           Require host `zizmor` on PATH (fail if missing).
-  --image IMG      Container image (default: ghcr.io/zizmorcore/zizmor:latest).
+  --image IMG      Container image (default: digest-pinned ghcr.io/zizmorcore/zizmor:1.25.2).
   -h, --help       Help.
 
 Environment:
   CONTAINER_ENGINE    docker (default) or podman.
-  CI_PLATFORM         Unset: linux/amd64 on x86_64, else linux/$host. Empty (CI_PLATFORM=): native.
+  CI_PLATFORM         Default linux/amd64 when unset. Set empty (CI_PLATFORM=) for native arch.
   ZIZMOR_IMAGE        Same as --image.
   GH_TOKEN, GITHUB_TOKEN  Forwarded into the container when set (online audits / remote lookups).
 
@@ -62,12 +62,13 @@ EOF
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
-# shellcheck source=helper-container-bind-mount.sh
-source "${SCRIPT_DIR}/helper-container-bind-mount.sh"
+
+# shellcheck source=helper-container-engine.sh
+source "${SCRIPT_DIR}/helper-container-engine.sh"
 
 FORCE_CONTAINER=0
 FORCE_HOST=0
-IMAGE="${ZIZMOR_IMAGE:-ghcr.io/zizmorcore/zizmor:latest}"
+IMAGE="${ZIZMOR_IMAGE:-ghcr.io/zizmorcore/zizmor:1.25.2@sha256:14ea7f5cc7c67933394a35b5a38a277397818d232602635edb2010b313afb110}"
 ZIZMOR_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -95,42 +96,65 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+ZIZMOR_INPUTS=()
+if [[ -d "${REPO_ROOT}/.github/workflows" ]]; then
+  while IFS= read -r -d '' path; do
+    ZIZMOR_INPUTS+=("${path}")
+  done < <(find "${REPO_ROOT}/.github/workflows" -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) -print0 | sort -z)
+fi
+if [[ -d "${REPO_ROOT}/.github/actions" ]]; then
+  while IFS= read -r -d '' path; do
+    ZIZMOR_INPUTS+=("${path}")
+  done < <(find "${REPO_ROOT}/.github/actions" -type f \( -name 'action.yml' -o -name 'action.yaml' \) -print0 | sort -z)
+fi
+if [[ ${#ZIZMOR_INPUTS[@]} -eq 0 ]]; then
+  printf 'error: no GitHub workflow/action inputs found under %s/.github\n' "${REPO_ROOT}" >&2
+  exit 1
+fi
+
 if [[ ${FORCE_CONTAINER} -eq 1 ]] && [[ ${FORCE_HOST} -eq 1 ]]; then
   printf 'error: --container and --host are mutually exclusive\n' >&2
   exit 1
 fi
 
-ENGINE="${CONTAINER_ENGINE:-docker}"
+ENGINE="$(nero_container_engine)"
 PLATFORM_ARGS=()
-pcsc_fido_load_ci_platform_args
+_resolved_platform="${CI_PLATFORM-linux/amd64}"
+if [[ -n ${_resolved_platform} ]]; then
+  PLATFORM_ARGS+=(--platform "${_resolved_platform}")
+fi
 
 run_host_zizmor() {
-  printf '\n── zizmor (host) ──\n'
+  printf '\n-- zizmor (host) --\n'
   printf 'Scan root: %s\n\n' "${REPO_ROOT}"
-  exec zizmor "${ZIZMOR_ARGS[@]}" "${REPO_ROOT}"
+  exec zizmor "${ZIZMOR_ARGS[@]}" "${ZIZMOR_INPUTS[@]}"
 }
 
 run_container_zizmor() {
-  if ! command -v "${ENGINE}" >/dev/null 2>&1; then
-    printf 'error: %s not found (install or set CONTAINER_ENGINE)\n' "${ENGINE}" >&2
+  if ! nero_require_container_engine >/dev/null; then
     exit 1
   fi
 
   local -a env_forward=()
+  local -a container_inputs=()
+  local input
   [[ -n ${GH_TOKEN:-} ]] && env_forward+=(-e "GH_TOKEN=${GH_TOKEN}")
   [[ -n ${GITHUB_TOKEN:-} ]] && env_forward+=(-e "GITHUB_TOKEN=${GITHUB_TOKEN}")
+  for input in "${ZIZMOR_INPUTS[@]}"; do
+    container_inputs+=("/src/${input#"${REPO_ROOT}/"}")
+  done
 
-  printf '\n── zizmor (%s) ──\n' "${IMAGE}"
-  printf 'Repo mount: %s → /src\n\n' "${REPO_ROOT}"
+  printf '\n-- zizmor (%s) --\n' "${IMAGE}"
+  printf 'Repo mount: %s -> /src\n\n' "${REPO_ROOT}"
 
   exec "${ENGINE}" run --rm \
     "${PLATFORM_ARGS[@]}" \
     "${env_forward[@]}" \
-    -v "${REPO_ROOT}:/src" \
+    -v "${REPO_ROOT}:/src:ro" \
     -w /src \
     "${IMAGE}" \
     "${ZIZMOR_ARGS[@]}" \
-    /src
+    "${container_inputs[@]}"
 }
 
 if [[ ${FORCE_HOST} -eq 1 ]]; then

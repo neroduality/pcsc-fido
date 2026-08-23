@@ -16,8 +16,8 @@
 
 #pragma once
 
-int pcsc_fido_browser_daemon_main(int argc, char **argv);
+int pcsc_fido_browser_daemon_main(int argc, char** argv);
 
 #if defined(PCSC_FIDO_TESTING)
-int pcsc_fido_browser_daemon_main_with_fd(int argc, char **argv, int uhid_fd);
+int pcsc_fido_browser_daemon_main_with_fd(int argc, char** argv, int uhid_fd);
 #endif

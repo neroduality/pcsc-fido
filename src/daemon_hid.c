@@ -16,24 +16,36 @@
 
 #include "pcsc_fido/daemon_hid.h"
 
-uint32_t pcsc_fido_daemon_hid_packet_cid(const uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE]) {
-  if (packet == nullptr) {
+#include "pcsc_fido/pcsc_bridge_limits.h"
+
+uint32_t pcsc_fido_daemon_hid_packet_cid(
+    const uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE]) {
+  if (packet == PCSC_FIDO_NULL) {
     return 0u;
   }
-  return ((uint32_t)packet[0] << 24u) | ((uint32_t)packet[1] << 16u) | ((uint32_t)packet[2] << 8u) |
-         packet[3];
+  return ((uint32_t)packet[PCSC_FIDO_HID_OFF_CID_B0]
+          << PCSC_FIDO_U32_SHIFT_BYTE3) |
+         ((uint32_t)packet[PCSC_FIDO_HID_OFF_CID_B1]
+          << PCSC_FIDO_U32_SHIFT_BYTE2) |
+         ((uint32_t)packet[PCSC_FIDO_HID_OFF_CID_B2]
+          << PCSC_FIDO_U32_SHIFT_BYTE1) |
+         packet[PCSC_FIDO_HID_OFF_CID_B3];
 }
 
-bool pcsc_fido_daemon_hid_is_cancel_packet(const uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE],
-                                           uint32_t cid) {
-  if (packet == nullptr) {
+bool pcsc_fido_daemon_hid_is_cancel_packet(
+    const uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE], uint32_t cid) {
+  if (packet == PCSC_FIDO_NULL) {
     return false;
   }
   return pcsc_fido_daemon_hid_packet_cid(packet) == cid &&
-         packet[4] == (0x80u | PCSC_FIDO_HID_CMD_CANCEL) && packet[5] == 0u && packet[6] == 0u;
+         packet[PCSC_FIDO_HID_OFF_CMD] ==
+             (PCSC_FIDO_HID_TYPE_INIT | PCSC_FIDO_HID_CMD_CANCEL) &&
+         packet[PCSC_FIDO_HID_OFF_BCNTH] == 0u &&
+         packet[PCSC_FIDO_HID_OFF_BCNTL] == 0u;
 }
 
-bool pcsc_fido_daemon_hid_decode_init_header(const uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE],
-                                             uint32_t *cid, uint8_t *cmd, size_t *payload_len) {
+bool pcsc_fido_daemon_hid_decode_init_header(
+    const uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE], uint32_t* cid,
+    uint8_t* cmd, size_t* payload_len) {
   return pcsc_fido_hid_decode_init_header(packet, cid, cmd, payload_len);
 }

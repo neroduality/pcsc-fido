@@ -18,8 +18,8 @@
 # Run TruffleHog OSS locally via Docker or Podman (same tool family as `.github/workflows/trufflehog.yml`).
 #
 # Usage:
-#   bash .github/scripts/run-local-trufflehog.sh
-#   bash .../run-local-trufflehog.sh -- git file:///repo --only-verified --json
+#   bash .github/scripts/run-trufflehog-locally.sh
+#   bash .../run-trufflehog-locally.sh -- git file:///repo --only-verified --json
 #
 # Without a git metadata dir under this repository root, defaults to `filesystem /repo`
 # so subtree checkouts still scan (CI full clones still use `git file:///repo`).
@@ -37,8 +37,8 @@ Arguments after `--` replace the entire default TruffleHog command line.
 
 Environment:
   CONTAINER_ENGINE      docker (default) or podman
-  CI_PLATFORM           Unset: linux/amd64 on x86_64, else linux/$host. Empty (CI_PLATFORM=): native.
-  TRUFFLEHOG_IMAGE      Image (default: trufflesecurity/trufflehog:latest)
+  CI_PLATFORM           Default linux/amd64 when unset. Set empty (CI_PLATFORM=) for native arch.
+  TRUFFLEHOG_IMAGE      Image (default: digest-pinned trufflesecurity/trufflehog:3.95.8)
 
 EOF
 }
@@ -50,8 +50,6 @@ fi
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
-# shellcheck source=helper-container-bind-mount.sh
-source "${SCRIPT_DIR}/helper-container-bind-mount.sh"
 
 ENGINE="${CONTAINER_ENGINE:-docker}"
 if ! command -v "${ENGINE}" >/dev/null 2>&1; then
@@ -59,10 +57,13 @@ if ! command -v "${ENGINE}" >/dev/null 2>&1; then
   exit 1
 fi
 
-TRUFFLEHOG_IMAGE="${TRUFFLEHOG_IMAGE:-trufflesecurity/trufflehog:latest}"
+TRUFFLEHOG_IMAGE="${TRUFFLEHOG_IMAGE:-trufflesecurity/trufflehog:3.95.8@sha256:d52e62fe0237bf0199cb79f94593051300b0989d9aeab8b431001d9f75e469c1}"
 
 PLATFORM_ARGS=()
-pcsc_fido_load_ci_platform_args
+_resolved_platform="${CI_PLATFORM-linux/amd64}"
+if [[ -n ${_resolved_platform} ]]; then
+  PLATFORM_ARGS+=(--platform "${_resolved_platform}")
+fi
 
 hog_cmd=()
 if (($# > 0)); then
@@ -82,8 +83,8 @@ if ((${#hog_cmd[@]} == 0)); then
   fi
 fi
 
-printf '\n── TruffleHog (%s) ──\n' "${TRUFFLEHOG_IMAGE}"
-printf 'Repo mount: %s → /repo\n\n' "${REPO_ROOT}"
+printf '\n-- TruffleHog (%s) --\n' "${TRUFFLEHOG_IMAGE}"
+printf 'Repo mount: %s -> /repo\n\n' "${REPO_ROOT}"
 
 exec "${ENGINE}" run --rm \
   "${PLATFORM_ARGS[@]}" \

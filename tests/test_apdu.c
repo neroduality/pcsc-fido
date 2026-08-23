@@ -14,16 +14,36 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "test_caps.h"
+
+enum {
+  TEST_CAP_270 = 270,
+  TEST_CAP_300 = 300,
+  TEST_CAP_320 = 320,
+  TEST_CAP_65536 = 65536,
+};
 #include "pcsc_fido/apdu.h"
 
 #include <stdio.h>
 #include <string.h>
+#include "pcsc_fido/mem_util.h"
+#include "pcsc_fido/pcsc_log.h"
+
+enum {
+  TEST_LIT_0X2CU = 0x2Cu,
+  TEST_LIT_0X67U = 0x67u,
+  TEST_LIT_0X6DU = 0x6Du,
+  TEST_LIT_255U = 255u,
+  TEST_LIT_256U = 256u,
+  TEST_LIT_261U = 261u,
+  TEST_LIT_265U = 265u,
+};
 
 static int failures;
 
-static void expect_true(int condition, const char *message) {
+static void expect_true(int condition, const char* message) {
   if (!condition) {
-    fprintf(stderr, "FAIL: %s\n", message);
+    pcsc_fido_log(PCSC_FIDO_LOG_ERROR, "FAIL: %s", message);
     failures++;
   }
 }
@@ -33,51 +53,63 @@ static void parses_select(void) {
                           0x00u, 0x06u, 0x47u, 0x2Fu, 0x00u, 0x01u};
   const pcsc_fido_apdu_t parsed = pcsc_fido_parse_apdu(apdu, sizeof(apdu));
   expect_true(parsed.kind == PCSC_FIDO_APDU_SELECT, "SELECT FIDO AID parsed");
-  expect_true(parsed.sw1 == 0x90u && parsed.sw2 == 0x00u, "SELECT status is 9000");
+  expect_true(parsed.sw1 == TEST_LIT_0X90U && parsed.sw2 == 0x00u,
+              "SELECT status is 9000");
 }
 
 static void packs_select_fido(void) {
-  const uint8_t expected_no_le[] = {0x00u, 0xA4u, 0x04u, 0x00u, 0x08u, 0xA0u, 0x00u,
-                                    0x00u, 0x06u, 0x47u, 0x2Fu, 0x00u, 0x01u};
-  const uint8_t expected_with_le[] = {0x00u, 0xA4u, 0x04u, 0x00u, 0x08u, 0xA0u, 0x00u,
-                                      0x00u, 0x06u, 0x47u, 0x2Fu, 0x00u, 0x01u, 0x00u};
+  const uint8_t expected_no_le[] = {0x00u, 0xA4u, 0x04u, 0x00u, 0x08u,
+                                    0xA0u, 0x00u, 0x00u, 0x06u, 0x47u,
+                                    0x2Fu, 0x00u, 0x01u};
+  const uint8_t expected_with_le[] = {0x00u, 0xA4u, 0x04u, 0x00u, 0x08u,
+                                      0xA0u, 0x00u, 0x00u, 0x06u, 0x47u,
+                                      0x2Fu, 0x00u, 0x01u, 0x00u};
   uint8_t apdu[PCSC_FIDO_SELECT_APDU_MAX];
   size_t apdu_len = 0u;
-  expect_true(pcsc_fido_pack_select_fido_apdu(apdu, sizeof(apdu), &apdu_len, false),
-              "pack SELECT without Le");
+  expect_true(
+      pcsc_fido_pack_select_fido_apdu(apdu, sizeof(apdu), &apdu_len, false),
+      "pack SELECT without Le");
   expect_true(apdu_len == sizeof(expected_no_le) &&
-                memcmp(apdu, expected_no_le, sizeof(expected_no_le)) == 0,
+                  memcmp(apdu, expected_no_le, sizeof(expected_no_le)) == 0,
               "SELECT without Le layout");
-  expect_true(pcsc_fido_pack_select_fido_apdu(apdu, sizeof(apdu), &apdu_len, true),
-              "pack SELECT with Le");
+  expect_true(
+      pcsc_fido_pack_select_fido_apdu(apdu, sizeof(apdu), &apdu_len, true),
+      "pack SELECT with Le");
   expect_true(apdu_len == sizeof(expected_with_le) &&
-                memcmp(apdu, expected_with_le, sizeof(expected_with_le)) == 0,
+                  memcmp(apdu, expected_with_le, sizeof(expected_with_le)) == 0,
               "SELECT with Le layout");
-  expect_true(!pcsc_fido_pack_select_fido_apdu(apdu, 5u, &apdu_len, false),
-              "reject undersized SELECT buffer");
+  expect_true(
+      !pcsc_fido_pack_select_fido_apdu(apdu, TEST_LIT_5U, &apdu_len, false),
+      "reject undersized SELECT buffer");
 }
 
 static void parses_short_ctap(void) {
-  const uint8_t apdu[] = {0x80u, 0x10u, 0x00u, 0x00u, 0x03u, 0x04u, 0xA1u, 0x00u, 0x00u};
+  const uint8_t apdu[] = {0x80u, 0x10u, 0x00u, 0x00u, 0x03u,
+                          0x04u, 0xA1u, 0x00u, 0x00u};
   const pcsc_fido_apdu_t parsed = pcsc_fido_parse_apdu(apdu, sizeof(apdu));
   expect_true(parsed.kind == PCSC_FIDO_APDU_CTAP, "short CTAP APDU parsed");
-  expect_true(parsed.hid_cmd == PCSC_FIDO_CTAPHID_CBOR, "short CTAP maps to HID CBOR");
-  expect_true(parsed.payload_len == 3u, "short CTAP payload length");
-  expect_true(parsed.payload != nullptr && parsed.payload[0] == 0x04u, "short CTAP payload starts");
+  expect_true(parsed.hid_cmd == PCSC_FIDO_CTAPHID_CBOR,
+              "short CTAP maps to HID CBOR");
+  expect_true(parsed.payload_len == TEST_LIT_3U, "short CTAP payload length");
+  expect_true(
+      parsed.payload != PCSC_FIDO_NULL && parsed.payload[0] == TEST_LIT_0X04U,
+      "short CTAP payload starts");
 }
 
 static void packs_short_ctap(void) {
   const uint8_t payload[] = {0x04u, 0xA1u, 0x00u};
-  uint8_t apdu[16];
+  uint8_t apdu[TEST_LIT_16];
   size_t apdu_len = 0u;
   pcsc_fido_apdu_t parsed;
-  expect_true(
-    pcsc_fido_pack_ctap2_cbor_apdu(payload, sizeof(payload), apdu, sizeof(apdu), &apdu_len),
-    "pack short CTAP APDU");
-  expect_true(apdu_len == 9u && apdu[4] == sizeof(payload) && apdu[8] == 0x00u,
+  expect_true(pcsc_fido_pack_ctap2_cbor_apdu(payload, sizeof(payload), apdu,
+                                             sizeof(apdu), &apdu_len),
+              "pack short CTAP APDU");
+  expect_true(apdu_len == TEST_LIT_9U && apdu[TEST_LIT_4] == sizeof(payload) &&
+                  apdu[TEST_LIT_8] == 0x00u,
               "short CTAP APDU layout");
   parsed = pcsc_fido_parse_apdu(apdu, apdu_len);
-  expect_true(parsed.kind == PCSC_FIDO_APDU_CTAP && parsed.payload_len == sizeof(payload),
+  expect_true(parsed.kind == PCSC_FIDO_APDU_CTAP &&
+                  parsed.payload_len == sizeof(payload),
               "packed short CTAP parses");
 }
 
@@ -86,62 +118,74 @@ static void parses_extended_ctap(void) {
                           0x03u, 0x04u, 0xA1u, 0x00u, 0x00u, 0x00u};
   const pcsc_fido_apdu_t parsed = pcsc_fido_parse_apdu(apdu, sizeof(apdu));
   expect_true(parsed.kind == PCSC_FIDO_APDU_CTAP, "extended CTAP APDU parsed");
-  expect_true(parsed.payload_len == 3u, "extended CTAP payload length");
+  expect_true(parsed.payload_len == TEST_LIT_3U,
+              "extended CTAP payload length");
 }
 
 static void packs_extended_ctap(void) {
-  uint8_t payload[300];
-  uint8_t apdu[320];
+  uint8_t payload[TEST_CAP_300];
+  uint8_t apdu[TEST_CAP_320];
   size_t apdu_len = 0u;
   pcsc_fido_apdu_t parsed;
-  memset(payload, 0xA5, sizeof(payload));
+  pcsc_fido_fill_bytes(payload, sizeof(payload), (uint8_t)TEST_LIT_0XA5);
   payload[0] = 0x01u;
+  expect_true(pcsc_fido_pack_ctap2_cbor_apdu(payload, sizeof(payload), apdu,
+                                             sizeof(apdu), &apdu_len),
+              "pack extended CTAP APDU");
   expect_true(
-    pcsc_fido_pack_ctap2_cbor_apdu(payload, sizeof(payload), apdu, sizeof(apdu), &apdu_len),
-    "pack extended CTAP APDU");
-  expect_true(apdu_len == sizeof(payload) + 9u && apdu[4] == 0x00u && apdu[5] == 0x01u &&
-                apdu[6] == 0x2Cu && apdu[apdu_len - 2u] == 0x00u && apdu[apdu_len - 1u] == 0x00u,
-              "extended CTAP APDU layout");
+      apdu_len == sizeof(payload) + TEST_LIT_9U && apdu[TEST_LIT_4] == 0x00u &&
+          apdu[TEST_LIT_5] == 0x01u && apdu[TEST_LIT_6] == TEST_LIT_0X2CU &&
+          apdu[apdu_len - TEST_LIT_2U] == 0x00u && apdu[apdu_len - 1u] == 0x00u,
+      "extended CTAP APDU layout");
   parsed = pcsc_fido_parse_apdu(apdu, apdu_len);
-  expect_true(parsed.kind == PCSC_FIDO_APDU_CTAP && parsed.payload_len == sizeof(payload),
+  expect_true(parsed.kind == PCSC_FIDO_APDU_CTAP &&
+                  parsed.payload_len == sizeof(payload),
               "packed extended CTAP parses");
 }
 
 static void packs_short_and_extended_boundaries(void) {
-  uint8_t payload[256];
-  uint8_t apdu[270];
+  uint8_t payload[TEST_CAP_256];
+  uint8_t apdu[TEST_CAP_270];
   size_t apdu_len = 0u;
-  memset(payload, 0xA5, sizeof(payload));
+  pcsc_fido_fill_bytes(payload, sizeof(payload), (uint8_t)TEST_LIT_0XA5);
   payload[0] = 0x01u;
 
-  expect_true(pcsc_fido_pack_ctap2_cbor_apdu(payload, 255u, apdu, sizeof(apdu), &apdu_len),
+  expect_true(pcsc_fido_pack_ctap2_cbor_apdu(payload, TEST_LIT_255U, apdu,
+                                             sizeof(apdu), &apdu_len),
               "pack 255-byte short CTAP APDU");
-  expect_true(apdu_len == 261u && apdu[4] == 255u, "255-byte payload uses short APDU");
+  expect_true(apdu_len == TEST_LIT_261U && apdu[TEST_LIT_4] == TEST_LIT_255U,
+              "255-byte payload uses short APDU");
 
-  expect_true(pcsc_fido_pack_ctap2_cbor_apdu(payload, 256u, apdu, sizeof(apdu), &apdu_len),
+  expect_true(pcsc_fido_pack_ctap2_cbor_apdu(payload, TEST_LIT_256U, apdu,
+                                             sizeof(apdu), &apdu_len),
               "pack 256-byte extended CTAP APDU");
-  expect_true(apdu_len == 265u && apdu[4] == 0x00u && apdu[5] == 0x01u && apdu[6] == 0x00u,
+  expect_true(apdu_len == TEST_LIT_265U && apdu[TEST_LIT_4] == 0x00u &&
+                  apdu[TEST_LIT_5] == 0x01u && apdu[TEST_LIT_6] == 0x00u,
               "256-byte payload uses extended APDU");
 }
 
 static void rejects_invalid_pack_arguments(void) {
   const uint8_t payload[] = {0x04u, 0xA1u, 0x00u};
-  uint8_t apdu[4];
+  uint8_t apdu[TEST_LIT_4];
   size_t apdu_len = 0u;
-  expect_true(
-    !pcsc_fido_pack_ctap2_cbor_apdu(payload, sizeof(payload), apdu, sizeof(apdu), &apdu_len),
-    "too-small APDU output rejected");
-  expect_true(
-    !pcsc_fido_pack_ctap2_cbor_apdu(nullptr, sizeof(payload), apdu, sizeof(apdu), &apdu_len),
-    "nullptr payload rejected when length is nonzero");
+  expect_true(!pcsc_fido_pack_ctap2_cbor_apdu(payload, sizeof(payload), apdu,
+                                              sizeof(apdu), &apdu_len),
+              "too-small APDU output rejected");
+  expect_true(!pcsc_fido_pack_ctap2_cbor_apdu(PCSC_FIDO_NULL, sizeof(payload),
+                                              apdu, sizeof(apdu), &apdu_len),
+              "PCSC_FIDO_NULL payload rejected when length is nonzero");
 }
 
 static void appends_status(void) {
-  uint8_t out[4] = {0xAAu, 0xBBu, 0x00u, 0x00u};
+  uint8_t out[TEST_LIT_4] = {TEST_LIT_0XAAU, TEST_LIT_0XBBU, 0x00u, 0x00u};
   size_t out_len = 0u;
-  expect_true(pcsc_fido_append_status(out, sizeof(out), 2u, 0x90u, 0x00u, &out_len),
+  expect_true(pcsc_fido_append_status(out, sizeof(out), TEST_LIT_2U,
+                                      TEST_LIT_0X90U, 0x00u, &out_len),
               "append status succeeds");
-  expect_true(out_len == 4u && out[2] == 0x90u && out[3] == 0x00u, "status bytes appended");
+  expect_true(out_len == TEST_LIT_4U &&
+                  out[TEST_SOCKETPAIR_FDS] == TEST_LIT_0X90U &&
+                  out[TEST_LIT_3] == 0x00u,
+              "status bytes appended");
 }
 
 static void rejects_unsupported_and_malformed_apdu(void) {
@@ -149,53 +193,66 @@ static void rejects_unsupported_and_malformed_apdu(void) {
   const uint8_t too_short[] = {0x00u, 0xA4u, 0x04u};
   const uint8_t bad_select[] = {0x00u, 0xA4u, 0x04u, 0x00u, 0x08u, 0x00u};
   const uint8_t bad_ctap_lc[] = {0x80u, 0x10u, 0x00u, 0x00u, 0x00u, 0x00u};
-  const uint8_t bad_ctap_len[] = {0x80u, 0x10u, 0x00u, 0x00u, 0x02u, 0x04u, 0x00u};
+  const uint8_t bad_ctap_len[] = {0x80u, 0x10u, 0x00u, 0x00u,
+                                  0x02u, 0x04u, 0x00u};
   const uint8_t unsupported_ins[] = {0x00u, 0x11u, 0x00u, 0x00u, 0x00u};
-  parsed = pcsc_fido_parse_apdu(nullptr, 4u);
-  expect_true(parsed.kind == PCSC_FIDO_APDU_UNSUPPORTED && parsed.sw1 == 0x67u,
-              "nullptr APDU returns wrong length");
+  parsed = pcsc_fido_parse_apdu(PCSC_FIDO_NULL, TEST_LIT_4U);
+  expect_true(
+      parsed.kind == PCSC_FIDO_APDU_UNSUPPORTED && parsed.sw1 == TEST_LIT_0X67U,
+      "PCSC_FIDO_NULL APDU returns wrong length");
   parsed = pcsc_fido_parse_apdu(too_short, sizeof(too_short));
-  expect_true(parsed.kind == PCSC_FIDO_APDU_UNSUPPORTED && parsed.sw1 == 0x67u,
-              "short APDU returns wrong length");
+  expect_true(
+      parsed.kind == PCSC_FIDO_APDU_UNSUPPORTED && parsed.sw1 == TEST_LIT_0X67U,
+      "short APDU returns wrong length");
   parsed = pcsc_fido_parse_apdu(bad_select, sizeof(bad_select));
-  expect_true(parsed.kind == PCSC_FIDO_APDU_UNSUPPORTED && parsed.sw1 == 0x6Du,
-              "bad SELECT returns INS not supported");
+  expect_true(
+      parsed.kind == PCSC_FIDO_APDU_UNSUPPORTED && parsed.sw1 == TEST_LIT_0X6DU,
+      "bad SELECT returns INS not supported");
   parsed = pcsc_fido_parse_apdu(bad_ctap_lc, sizeof(bad_ctap_lc));
-  expect_true(parsed.kind == PCSC_FIDO_APDU_UNSUPPORTED && parsed.sw1 == 0x67u,
-              "zero Lc CTAP rejected");
+  expect_true(
+      parsed.kind == PCSC_FIDO_APDU_UNSUPPORTED && parsed.sw1 == TEST_LIT_0X67U,
+      "zero Lc CTAP rejected");
   parsed = pcsc_fido_parse_apdu(bad_ctap_len, sizeof(bad_ctap_len));
-  expect_true(parsed.kind == PCSC_FIDO_APDU_UNSUPPORTED && parsed.sw1 == 0x67u,
-              "length mismatch CTAP rejected");
+  expect_true(
+      parsed.kind == PCSC_FIDO_APDU_UNSUPPORTED && parsed.sw1 == TEST_LIT_0X67U,
+      "length mismatch CTAP rejected");
   parsed = pcsc_fido_parse_apdu(unsupported_ins, sizeof(unsupported_ins));
-  expect_true(parsed.kind == PCSC_FIDO_APDU_UNSUPPORTED && parsed.sw1 == 0x6Du,
-              "unsupported INS rejected");
+  expect_true(
+      parsed.kind == PCSC_FIDO_APDU_UNSUPPORTED && parsed.sw1 == TEST_LIT_0X6DU,
+      "unsupported INS rejected");
 }
 
 static void append_status_failures(void) {
-  uint8_t out[3];
+  uint8_t out[TEST_LIT_3];
   size_t out_len = 0u;
-  expect_true(!pcsc_fido_append_status(nullptr, sizeof(out), 0u, 0x90u, 0x00u, &out_len),
-              "append status nullptr out rejected");
-  expect_true(!pcsc_fido_append_status(out, sizeof(out), 2u, 0x90u, 0x00u, &out_len),
+  expect_true(!pcsc_fido_append_status(PCSC_FIDO_NULL, sizeof(out), 0u,
+                                       TEST_LIT_0X90U, 0x00u, &out_len),
+              "append status PCSC_FIDO_NULL out rejected");
+  expect_true(!pcsc_fido_append_status(out, sizeof(out), TEST_LIT_2U,
+                                       TEST_LIT_0X90U, 0x00u, &out_len),
               "append status small buffer rejected");
-  expect_true(!pcsc_fido_append_status(out, sizeof(out), (size_t)-1, 0x90u, 0x00u, &out_len),
+  expect_true(!pcsc_fido_append_status(out, sizeof(out), (size_t)-1,
+                                       TEST_LIT_0X90U, 0x00u, &out_len),
               "append status overflow rejected");
 }
 
 static void packs_zero_length_and_rejects_oversize(void) {
-  uint8_t apdu[16];
+  uint8_t apdu[TEST_LIT_16];
   size_t apdu_len = 0u;
   pcsc_fido_apdu_t parsed;
   const uint8_t empty_payload = 0u;
-  expect_true(pcsc_fido_pack_ctap2_cbor_apdu(&empty_payload, 0u, apdu, sizeof(apdu), &apdu_len),
+  expect_true(pcsc_fido_pack_ctap2_cbor_apdu(&empty_payload, 0u, apdu,
+                                             sizeof(apdu), &apdu_len),
               "zero-length payload packs");
   parsed = pcsc_fido_parse_apdu(apdu, apdu_len);
-  expect_true(parsed.kind == PCSC_FIDO_APDU_UNSUPPORTED && parsed.sw1 == 0x67u,
-              "zero-length packed APDU rejected on parse");
+  expect_true(
+      parsed.kind == PCSC_FIDO_APDU_UNSUPPORTED && parsed.sw1 == TEST_LIT_0X67U,
+      "zero-length packed APDU rejected on parse");
   {
-    uint8_t huge[65536];
-    memset(huge, 0xA5, sizeof(huge));
-    expect_true(!pcsc_fido_pack_ctap2_cbor_apdu(huge, sizeof(huge), apdu, sizeof(apdu), &apdu_len),
+    uint8_t huge[TEST_CAP_65536];
+    pcsc_fido_fill_bytes(huge, sizeof(huge), (uint8_t)TEST_LIT_0XA5);
+    expect_true(!pcsc_fido_pack_ctap2_cbor_apdu(huge, sizeof(huge), apdu,
+                                                sizeof(apdu), &apdu_len),
                 "65536-byte payload rejected");
   }
 }

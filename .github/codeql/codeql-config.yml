@@ -15,6 +15,13 @@
 # limitations under the License.
 
 name: pcsc-fido (C)
+
+# Strengthen the default code-scanning suite with the broader security queries
+# (CWE coverage: taint, overflows, format strings, etc.). Findings surface in the
+# Security tab; they do not block PRs.
+queries:
+  - uses: security-extended
+
 paths-ignore:
   - build/**
   - dist/**

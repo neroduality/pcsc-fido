@@ -14,8 +14,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#define _POSIX_C_SOURCE 200809L
-
 #include "mock_pcsc.h"
 #include "pcsc_fido/pcsc_bridge_limits.h"
 
@@ -24,45 +22,57 @@
 #include <stdatomic.h>
 #include <string.h>
 #include <time.h>
+#include "pcsc_fido/mem_util.h"
 
 enum {
-  MOCK_SCARD_WAIT_INFINITE = 0xFFFFFFFFu,
+  MS_PER_SEC = 1000,
+  NS_PER_MS = 1000000,
+  NS_PER_SEC = 1000000000,
 };
 
-static void mock_sleep_status_timeout(DWORD dwTimeout) {
+static void mock_sleep_status_timeout(DWORD timeout_ms) {
   struct timespec ts;
   long ms;
-  if (dwTimeout == 0u || dwTimeout == MOCK_SCARD_WAIT_INFINITE) {
+  if (timeout_ms == 0u) {
     return;
   }
-  ms = (long)dwTimeout;
-  ts.tv_sec = ms / 1000L;
-  ts.tv_nsec = (long)(ms % 1000L) * 1000000L;
-  (void)nanosleep(&ts, nullptr);
+  ms = (long)timeout_ms;
+  ts.tv_sec = ms / MS_PER_SEC;
+  ts.tv_nsec = (ms % MS_PER_SEC) * NS_PER_MS;
+  (void)nanosleep(&ts, PCSC_FIDO_NULL);
 }
 
-static LONG mock_return_status_timeout(DWORD dwTimeout) {
-  mock_sleep_status_timeout(dwTimeout);
+static LONG mock_return_status_timeout(DWORD timeout_ms) {
+  mock_sleep_status_timeout(timeout_ms);
   return SCARD_E_TIMEOUT;
 }
 
 const SCARD_IO_REQUEST g_rgSCardT0Pci = {
-  .dwProtocol = SCARD_PROTOCOL_T0,
-  .cbPciLength = sizeof(SCARD_IO_REQUEST),
+    .dwProtocol = SCARD_PROTOCOL_T0,
+    .cbPciLength = sizeof(SCARD_IO_REQUEST),
 };
 const SCARD_IO_REQUEST g_rgSCardT1Pci = {
-  .dwProtocol = SCARD_PROTOCOL_T1,
-  .cbPciLength = sizeof(SCARD_IO_REQUEST),
+    .dwProtocol = SCARD_PROTOCOL_T1,
+    .cbPciLength = sizeof(SCARD_IO_REQUEST),
 };
 const SCARD_IO_REQUEST g_rgSCardRawPci = {
-  .dwProtocol = SCARD_PROTOCOL_RAW,
-  .cbPciLength = sizeof(SCARD_IO_REQUEST),
+    .dwProtocol = SCARD_PROTOCOL_RAW,
+    .cbPciLength = sizeof(SCARD_IO_REQUEST),
 };
 
 enum {
   MOCK_READERS_CAP = PCSC_FIDO_READER_LIST_BUF_MAX,
   MOCK_TRANSMIT_CAP = 65538u,
   MOCK_STATUS_SEQUENCE_CAP = 64u,
+  MSZ_DOUBLE_NUL = 2,
+  MOCK_CARD_HANDLE = 2,
+  SW_LEN = 2,
+  SELECT_APDU_LEN = 13,
+  APDU_OFF_DATA = 5,
+  SW_NO_ERROR_HI = 0x90,
+  SW_FILE_NOT_FOUND_HI = 0x6A,
+  SW_FILE_NOT_FOUND_LO = 0x82,
+  TRANSMIT_CANCEL_WAIT_MS = 200,
 };
 
 typedef struct {
@@ -104,20 +114,21 @@ static atomic_bool g_cancel_during_transmit;
 static pthread_mutex_t g_transmit_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_transmit_cond = PTHREAD_COND_INITIALIZER;
 
-static void deadline_from_now(struct timespec *deadline, unsigned timeout_ms) {
+static void deadline_from_now(struct timespec* deadline, unsigned timeout_ms) {
   (void)clock_gettime(CLOCK_REALTIME, deadline);
-  deadline->tv_sec += (time_t)(timeout_ms / 1000u);
-  deadline->tv_nsec += (long)((timeout_ms % 1000u) * 1000000u);
-  if (deadline->tv_nsec >= 1000000000L) {
+  deadline->tv_sec += (time_t)(timeout_ms / MS_PER_SEC);
+  deadline->tv_nsec += (long)((timeout_ms % MS_PER_SEC) * NS_PER_MS);
+  if (deadline->tv_nsec >= NS_PER_SEC) {
     deadline->tv_sec++;
-    deadline->tv_nsec -= 1000000000L;
+    deadline->tv_nsec -= NS_PER_SEC;
   }
 }
 
-static const uint8_t k_fido_aid[] = {0xA0u, 0x00u, 0x00u, 0x06u, 0x47u, 0x2Fu, 0x00u, 0x01u};
+static const uint8_t FIDO_AID[] = {0xA0u, 0x00u, 0x00u, 0x06u,
+                                   0x47u, 0x2Fu, 0x00u, 0x01u};
 
 void mock_pcsc_reset(void) {
-  memset(&g_mock, 0, sizeof(g_mock));
+  pcsc_fido_zero_bytes(&g_mock, sizeof(g_mock));
   pthread_mutex_lock(&g_transmit_lock);
   atomic_store(&g_transmit_wait_for_cancel, false);
   atomic_store(&g_transmit_waiting, false);
@@ -127,13 +138,14 @@ void mock_pcsc_reset(void) {
   pthread_mutex_unlock(&g_transmit_lock);
   g_mock.connect_active_protocol = SCARD_PROTOCOL_T1;
   g_mock.card_present_immediately = true;
-  g_mock.transmit_response[0] = 0x00u;
-  g_mock.transmit_response[1] = 0xA1u;
-  g_mock.transmit_response[2] = 0x01u;
-  g_mock.transmit_response[3] = 0x02u;
-  g_mock.transmit_response[4] = 0x90u;
-  g_mock.transmit_response[5] = 0x00u;
-  g_mock.transmit_response_len = 6u;
+  {
+    static const uint8_t MOCK_DEFAULT_RESPONSE[] = {0x00u, 0xA1u, 0x01u,
+                                                    0x02u, 0x90u, 0x00u};
+    (void)pcsc_fido_copy_bytes(
+        g_mock.transmit_response, sizeof(MOCK_DEFAULT_RESPONSE), 0u,
+        MOCK_DEFAULT_RESPONSE, sizeof(MOCK_DEFAULT_RESPONSE));
+    g_mock.transmit_response_len = sizeof(MOCK_DEFAULT_RESPONSE);
+  }
 }
 
 static size_t mock_readers_msz_len(void) {
@@ -143,38 +155,42 @@ static size_t mock_readers_msz_len(void) {
   if (g_mock.readers[0] == '\0') {
     return 0u;
   }
-  return strlen(g_mock.readers) + 2u;
+  return strlen(g_mock.readers) + MSZ_DOUBLE_NUL;
 }
 
-void mock_pcsc_set_readers(const char *readers) {
-  if (readers == nullptr) {
+void mock_pcsc_set_readers(const char* readers) {
+  if (readers == PCSC_FIDO_NULL) {
     g_mock.readers[0] = '\0';
     g_mock.readers_msz_len = 0u;
     return;
   }
-  memset(g_mock.readers, 0, sizeof(g_mock.readers));
-  snprintf(g_mock.readers, sizeof(g_mock.readers), "%s", readers);
+  pcsc_fido_zero_bytes(g_mock.readers, sizeof(g_mock.readers));
+  if (!pcsc_fido_copy_cstr(g_mock.readers, sizeof(g_mock.readers), readers)) {
+    g_mock.readers[0] = '\0';
+  }
   g_mock.readers_msz_len = 0u;
 }
 
-void mock_pcsc_set_reader_pair(const char *reader_a, const char *reader_b) {
+void mock_pcsc_set_reader_pair(const char* reader_a, const char* reader_b) {
   size_t alen;
   size_t blen;
   size_t total;
-  if (reader_a == nullptr || reader_b == nullptr) {
+  if (reader_a == PCSC_FIDO_NULL || reader_b == PCSC_FIDO_NULL) {
     g_mock.readers[0] = '\0';
     g_mock.readers_msz_len = 0u;
     return;
   }
   alen = strlen(reader_a);
   blen = strlen(reader_b);
-  total = alen + 1u + blen + 2u;
+  total = alen + 1u + blen + MSZ_DOUBLE_NUL;
   if (total > MOCK_READERS_CAP) {
     total = MOCK_READERS_CAP;
   }
-  memset(g_mock.readers, 0, sizeof(g_mock.readers));
-  memcpy(g_mock.readers, reader_a, alen + 1u);
-  memcpy(g_mock.readers + alen + 1u, reader_b, blen + 1u);
+  pcsc_fido_zero_bytes(g_mock.readers, sizeof(g_mock.readers));
+  (void)pcsc_fido_copy_bytes(g_mock.readers, alen + 1u, 0u, reader_a,
+                             alen + 1u);
+  (void)pcsc_fido_copy_bytes(g_mock.readers + alen + 1u, blen + 1u, 0u,
+                             reader_b, blen + 1u);
   g_mock.readers_msz_len = total;
 }
 
@@ -194,25 +210,15 @@ void mock_pcsc_set_establish_fail_system_scope(bool enabled) {
   g_mock.establish_fail_system_scope = enabled;
 }
 
-void mock_pcsc_set_establish_fail(LONG rv) {
-  g_mock.establish_fail = rv;
-}
+void mock_pcsc_set_establish_fail(LONG rv) { g_mock.establish_fail = rv; }
 
-void mock_pcsc_set_list_probe_fail(LONG rv) {
-  g_mock.list_probe_fail = rv;
-}
+void mock_pcsc_set_list_probe_fail(LONG rv) { g_mock.list_probe_fail = rv; }
 
-void mock_pcsc_set_list_fill_fail(LONG rv) {
-  g_mock.list_fill_fail = rv;
-}
+void mock_pcsc_set_list_fill_fail(LONG rv) { g_mock.list_fill_fail = rv; }
 
-void mock_pcsc_set_get_status_fail(LONG rv) {
-  g_mock.get_status_fail = rv;
-}
+void mock_pcsc_set_get_status_fail(LONG rv) { g_mock.get_status_fail = rv; }
 
-void mock_pcsc_set_connect_fail(LONG rv) {
-  g_mock.connect_fail = rv;
-}
+void mock_pcsc_set_connect_fail(LONG rv) { g_mock.connect_fail = rv; }
 
 void mock_pcsc_set_connect_proto_mismatch_once(bool enabled) {
   g_mock.connect_proto_mismatch_once = enabled;
@@ -226,8 +232,8 @@ void mock_pcsc_set_card_present_immediately(bool enabled) {
   g_mock.card_present_immediately = enabled;
 }
 
-void mock_pcsc_set_status_present_sequence(const bool *present, size_t len) {
-  if (present == nullptr || len == 0u) {
+void mock_pcsc_set_status_present_sequence(const bool* present, size_t len) {
+  if (present == PCSC_FIDO_NULL || len == 0u) {
     g_mock.status_present_sequence_len = 0u;
     g_mock.status_present_sequence_pos = 0u;
     return;
@@ -235,7 +241,9 @@ void mock_pcsc_set_status_present_sequence(const bool *present, size_t len) {
   if (len > MOCK_STATUS_SEQUENCE_CAP) {
     len = MOCK_STATUS_SEQUENCE_CAP;
   }
-  memcpy(g_mock.status_present_sequence, present, len * sizeof(present[0]));
+  (void)pcsc_fido_copy_bytes(g_mock.status_present_sequence,
+                             len * sizeof(present[0]), 0u, present,
+                             len * sizeof(present[0]));
   g_mock.status_present_sequence_len = len;
   g_mock.status_present_sequence_pos = 0u;
 }
@@ -267,12 +275,12 @@ void mock_pcsc_set_transmit_wait_for_cancel(bool enabled) {
   pthread_mutex_unlock(&g_transmit_lock);
 }
 
-void mock_pcsc_set_transmit_response(const uint8_t *data, size_t len) {
-  if (data == nullptr || len > sizeof(g_mock.transmit_response)) {
+void mock_pcsc_set_transmit_response(const uint8_t* data, size_t len) {
+  if (data == PCSC_FIDO_NULL || len > sizeof(g_mock.transmit_response)) {
     g_mock.transmit_response_len = 0u;
     return;
   }
-  memcpy(g_mock.transmit_response, data, len);
+  (void)pcsc_fido_copy_bytes(g_mock.transmit_response, len, 0u, data, len);
   g_mock.transmit_response_len = len;
 }
 
@@ -280,9 +288,7 @@ void mock_pcsc_set_select_first_fail(bool enabled) {
   g_mock.select_first_fail = enabled;
 }
 
-unsigned mock_pcsc_transmit_call_count(void) {
-  return g_mock.transmit_calls;
-}
+unsigned mock_pcsc_transmit_call_count(void) { return g_mock.transmit_calls; }
 
 unsigned mock_pcsc_get_status_call_count(void) {
   return g_mock.get_status_calls;
@@ -298,7 +304,8 @@ bool mock_pcsc_wait_for_transmit_waiting(unsigned timeout_ms) {
   deadline_from_now(&deadline, timeout_ms);
   pthread_mutex_lock(&g_transmit_lock);
   while (!atomic_load(&g_transmit_waiting)) {
-    if (pthread_cond_timedwait(&g_transmit_cond, &g_transmit_lock, &deadline) != 0) {
+    if (pthread_cond_timedwait(&g_transmit_cond, &g_transmit_lock, &deadline) !=
+        0) {
       break;
     }
   }
@@ -307,53 +314,79 @@ bool mock_pcsc_wait_for_transmit_waiting(unsigned timeout_ms) {
   return waiting;
 }
 
-static bool is_select_apdu(const uint8_t *capdu, DWORD capdu_len, bool *with_le) {
+static bool is_select_apdu(const uint8_t* capdu, DWORD capdu_len,
+                           bool* with_le) {
+  static const uint8_t SELECT_PREFIX[] = {0x00u, 0xA4u, 0x04u, 0x00u,
+                                          (uint8_t)sizeof(FIDO_AID)};
   *with_le = false;
-  if (capdu == nullptr || capdu_len < 13u) {
+  if (capdu == PCSC_FIDO_NULL || capdu_len < SELECT_APDU_LEN) {
     return false;
   }
-  if (capdu[0] != 0x00u || capdu[1] != 0xA4u || capdu[2] != 0x04u || capdu[3] != 0x00u ||
-      capdu[4] != (uint8_t)sizeof(k_fido_aid) ||
-      memcmp(capdu + 5u, k_fido_aid, sizeof(k_fido_aid)) != 0) {
+  if (memcmp(capdu, SELECT_PREFIX, sizeof(SELECT_PREFIX)) != 0 ||
+      memcmp(capdu + APDU_OFF_DATA, FIDO_AID, sizeof(FIDO_AID)) != 0) {
     return false;
   }
-  if (capdu_len == 13u + 1u) {
+  if (capdu_len == SELECT_APDU_LEN + 1u) {
     *with_le = true;
   }
   return true;
 }
 
-LONG SCardEstablishContext(DWORD dwScope, LPCVOID pvReserved1, LPCVOID pvReserved2,
-                           LPSCARDCONTEXT phContext) {
-  (void)dwScope;
-  (void)pvReserved1;
-  (void)pvReserved2;
-  if (phContext == nullptr) {
+LONG scard_establish_context(
+    DWORD scope, LPCVOID reserved1, LPCVOID reserved2,
+    LPSCARDCONTEXT context_out) __asm__("SCardEstablishContext");
+LONG scard_release_context(SCARDCONTEXT context) __asm__("SCardReleaseContext");
+LONG scard_list_readers(SCARDCONTEXT context, LPCSTR groups, LPSTR readers,
+                        LPDWORD readers_len) __asm__("SCardListReaders");
+LONG scard_get_status_change(
+    SCARDCONTEXT context, DWORD timeout_ms, LPSCARD_READERSTATE reader_states,
+    DWORD readers_count) __asm__("SCardGetStatusChange");
+LONG scard_connect(SCARDCONTEXT context, LPCSTR reader, DWORD share_mode,
+                   DWORD preferred_protocols, LPSCARDHANDLE card_out,
+                   LPDWORD active_protocol_out) __asm__("SCardConnect");
+LONG scard_disconnect(SCARDHANDLE card,
+                      DWORD disposition) __asm__("SCardDisconnect");
+LONG scard_status(SCARDHANDLE card, LPSTR reader_name_out,
+                  LPDWORD reader_name_len_out, LPDWORD state_out,
+                  LPDWORD protocol_out, LPBYTE atr_out,
+                  LPDWORD atr_len_out) __asm__("SCardStatus");
+LONG scard_transmit(SCARDHANDLE card, const SCARD_IO_REQUEST* send_pci,
+                    LPCBYTE send_buffer, DWORD send_length,
+                    LPSCARD_IO_REQUEST recv_pci, LPBYTE recv_buffer,
+                    LPDWORD recv_length) __asm__("SCardTransmit");
+LONG scard_cancel(SCARDCONTEXT context) __asm__("SCardCancel");
+
+LONG scard_establish_context(DWORD scope, LPCVOID reserved1, LPCVOID reserved2,
+                             LPSCARDCONTEXT context_out) {
+  (void)scope;
+  (void)reserved1;
+  (void)reserved2;
+  if (context_out == PCSC_FIDO_NULL) {
     return SCARD_E_INVALID_PARAMETER;
   }
-  if (g_mock.establish_fail_system_scope && dwScope == SCARD_SCOPE_SYSTEM) {
+  if (g_mock.establish_fail_system_scope && scope == SCARD_SCOPE_SYSTEM) {
     return SCARD_F_INTERNAL_ERROR;
   }
   if (g_mock.establish_fail != 0) {
     return g_mock.establish_fail;
   }
-  *phContext = 1;
+  *context_out = 1;
   return SCARD_S_SUCCESS;
 }
 
-LONG SCardReleaseContext(SCARDCONTEXT hContext) {
-  (void)hContext;
+LONG scard_release_context(SCARDCONTEXT context) {
+  (void)context;
   return SCARD_S_SUCCESS;
 }
 
-LONG SCardListReaders(SCARDCONTEXT hContext, LPCSTR mszGroups, LPSTR mszReaders,
-                      LPDWORD pcchReaders) {
-  (void)hContext;
-  (void)mszGroups;
-  if (pcchReaders == nullptr) {
+LONG scard_list_readers(SCARDCONTEXT context, LPCSTR groups, LPSTR readers,
+                        LPDWORD readers_len) {
+  (void)context;
+  (void)groups;
+  if (readers_len == PCSC_FIDO_NULL) {
     return SCARD_E_INVALID_PARAMETER;
   }
-  if (mszReaders == nullptr) {
+  if (readers == PCSC_FIDO_NULL) {
     if (g_mock.list_probe_fail != 0) {
       return g_mock.list_probe_fail;
     }
@@ -368,10 +401,10 @@ LONG SCardListReaders(SCARDCONTEXT hContext, LPCSTR mszGroups, LPSTR mszReaders,
       return SCARD_E_NO_READERS_AVAILABLE;
     }
     if (g_mock.list_probe_needed != 0u) {
-      *pcchReaders = g_mock.list_probe_needed;
+      *readers_len = g_mock.list_probe_needed;
       return SCARD_S_SUCCESS;
     }
-    *pcchReaders = (DWORD)mock_readers_msz_len();
+    *readers_len = (DWORD)mock_readers_msz_len();
     return SCARD_S_SUCCESS;
   }
   if (g_mock.list_fill_fail != 0) {
@@ -382,28 +415,29 @@ LONG SCardListReaders(SCARDCONTEXT hContext, LPCSTR mszGroups, LPSTR mszReaders,
   }
   {
     const DWORD needed = (DWORD)mock_readers_msz_len();
-    if (*pcchReaders < needed) {
+    if (*readers_len < needed) {
       return SCARD_E_INSUFFICIENT_BUFFER;
     }
-    memcpy(mszReaders, g_mock.readers, needed);
-    *pcchReaders = needed;
+    (void)pcsc_fido_copy_bytes(readers, needed, 0u, g_mock.readers, needed);
+    *readers_len = needed;
   }
   return SCARD_S_SUCCESS;
 }
 
-LONG SCardGetStatusChange(SCARDCONTEXT hContext, DWORD dwTimeout,
-                          LPSCARD_READERSTATE rgReaderStates, DWORD cReaders) {
-  (void)hContext;
+LONG scard_get_status_change(SCARDCONTEXT context, DWORD timeout_ms,
+                             LPSCARD_READERSTATE reader_states,
+                             DWORD readers_count) {
+  (void)context;
   g_mock.get_status_calls++;
   if (g_mock.get_status_fail != 0) {
     return g_mock.get_status_fail;
   }
-  if (rgReaderStates == nullptr || cReaders == 0u) {
+  if (reader_states == PCSC_FIDO_NULL || readers_count == 0u) {
     return SCARD_E_INVALID_PARAMETER;
   }
   if (g_mock.get_status_timeouts_before_present > 0u) {
     g_mock.get_status_timeouts_before_present--;
-    return mock_return_status_timeout(dwTimeout);
+    return mock_return_status_timeout(timeout_ms);
   }
   bool present = g_mock.card_present_immediately;
   if (g_mock.status_present_sequence_len > 0u) {
@@ -416,92 +450,102 @@ LONG SCardGetStatusChange(SCARDCONTEXT hContext, DWORD dwTimeout,
     present = g_mock.status_present_sequence[pos];
   }
   if (!present && g_mock.status_present_sequence_len == 0u) {
-    return mock_return_status_timeout(dwTimeout);
+    return mock_return_status_timeout(timeout_ms);
   }
-  for (DWORD i = 0u; i < cReaders; i++) {
-    rgReaderStates[i].dwEventState = SCARD_STATE_CHANGED | SCARD_STATE_UNPOWERED;
+  for (DWORD i = 0u; i < readers_count; i++) {
+    reader_states[i].dwEventState = SCARD_STATE_CHANGED | SCARD_STATE_UNPOWERED;
     if (present) {
-      rgReaderStates[i].dwEventState |= SCARD_STATE_PRESENT;
+      reader_states[i].dwEventState |= SCARD_STATE_PRESENT;
     } else {
-      rgReaderStates[i].dwEventState |= SCARD_STATE_EMPTY;
+      reader_states[i].dwEventState |= SCARD_STATE_EMPTY;
     }
-    if (g_mock.multi_present_readers && cReaders > 1u) {
+    if (g_mock.multi_present_readers && readers_count > 1u) {
       continue;
     }
   }
   return SCARD_S_SUCCESS;
 }
 
-LONG SCardConnect(SCARDCONTEXT hContext, LPCSTR szReader, DWORD dwShareMode,
-                  DWORD dwPreferredProtocols, LPSCARDHANDLE phCard, LPDWORD pdwActiveProtocol) {
-  (void)hContext;
-  (void)szReader;
-  (void)dwShareMode;
-  (void)dwPreferredProtocols;
-  if (phCard == nullptr || pdwActiveProtocol == nullptr) {
+LONG scard_connect(SCARDCONTEXT context, LPCSTR reader, DWORD share_mode,
+                   DWORD preferred_protocols, LPSCARDHANDLE card_out,
+                   LPDWORD active_protocol_out) {
+  (void)context;
+  (void)reader;
+  (void)share_mode;
+  (void)preferred_protocols;
+  if (card_out == PCSC_FIDO_NULL || active_protocol_out == PCSC_FIDO_NULL) {
     return SCARD_E_INVALID_PARAMETER;
   }
   if (g_mock.connect_fail != 0) {
     return g_mock.connect_fail;
   }
-  if (g_mock.connect_proto_mismatch_once && !g_mock.connect_proto_mismatch_used) {
+  if (g_mock.connect_proto_mismatch_once &&
+      !g_mock.connect_proto_mismatch_used) {
     g_mock.connect_proto_mismatch_used = true;
     return SCARD_E_PROTO_MISMATCH;
   }
-  *phCard = 2;
-  *pdwActiveProtocol = g_mock.connect_active_protocol;
+  *card_out = MOCK_CARD_HANDLE;
+  *active_protocol_out = g_mock.connect_active_protocol;
   return SCARD_S_SUCCESS;
 }
 
-LONG SCardDisconnect(SCARDHANDLE hCard, DWORD dwDisposition) {
-  (void)hCard;
-  (void)dwDisposition;
+LONG scard_disconnect(SCARDHANDLE card, DWORD disposition) {
+  (void)card;
+  (void)disposition;
   return SCARD_S_SUCCESS;
 }
 
-LONG SCardStatus(SCARDHANDLE hCard, LPSTR mszReaderName, LPDWORD pcchReaderLen, LPDWORD pdwState,
-                 LPDWORD pdwProtocol, LPBYTE pbAtr, LPDWORD pcbAtrLen) {
-  (void)mszReaderName;
-  (void)pcchReaderLen;
-  (void)pbAtr;
-  (void)pcbAtrLen;
-  if (hCard == 0) {
+LONG scard_status(SCARDHANDLE card, LPSTR reader_name_out,
+                  LPDWORD reader_name_len_out, LPDWORD state_out,
+                  LPDWORD protocol_out, LPBYTE atr_out, LPDWORD atr_len_out) {
+  if (card == 0) {
     return SCARD_E_INVALID_HANDLE;
   }
-  if (pdwState == nullptr || pdwProtocol == nullptr) {
+  if (state_out == PCSC_FIDO_NULL || protocol_out == PCSC_FIDO_NULL) {
     return SCARD_E_INVALID_PARAMETER;
   }
-  *pdwProtocol = g_mock.connect_active_protocol;
-  *pdwState = 0u;
+  if (reader_name_out != PCSC_FIDO_NULL &&
+      reader_name_len_out != PCSC_FIDO_NULL) {
+    reader_name_out[0] = '\0';
+    *reader_name_len_out = 1u;
+  }
+  if (atr_out != PCSC_FIDO_NULL && atr_len_out != PCSC_FIDO_NULL) {
+    atr_out[0] = 0u;
+    *atr_len_out = 0u;
+  }
+  *protocol_out = g_mock.connect_active_protocol;
+  *state_out = 0u;
   if (g_mock.card_present_immediately) {
-    *pdwState |= SCARD_STATE_PRESENT;
+    *state_out |= SCARD_STATE_PRESENT;
   } else {
-    *pdwState |= SCARD_STATE_EMPTY;
+    *state_out |= SCARD_STATE_EMPTY;
   }
   return SCARD_S_SUCCESS;
 }
 
-LONG SCardTransmit(SCARDHANDLE hCard, const SCARD_IO_REQUEST *pioSendPci, LPCBYTE pbSendBuffer,
-                   DWORD cbSendLength, LPSCARD_IO_REQUEST pioRecvPci, LPBYTE pbRecvBuffer,
-                   LPDWORD pcbRecvLength) {
+LONG scard_transmit(SCARDHANDLE card, const SCARD_IO_REQUEST* send_pci,
+                    LPCBYTE send_buffer, DWORD send_length,
+                    LPSCARD_IO_REQUEST recv_pci, LPBYTE recv_buffer,
+                    LPDWORD recv_length) {
   bool with_le = false;
-  (void)hCard;
-  (void)pioSendPci;
-  (void)pioRecvPci;
+  (void)card;
+  (void)send_pci;
+  (void)recv_pci;
   g_mock.transmit_calls++;
-  if (pbRecvBuffer == nullptr || pcbRecvLength == nullptr) {
+  if (recv_buffer == PCSC_FIDO_NULL || recv_length == PCSC_FIDO_NULL) {
     return SCARD_E_INVALID_PARAMETER;
   }
-  if (!is_select_apdu(pbSendBuffer, cbSendLength, &with_le) &&
+  if (!is_select_apdu(send_buffer, send_length, &with_le) &&
       atomic_load(&g_transmit_wait_for_cancel)) {
     struct timespec deadline;
     LONG rv = SCARD_F_COMM_ERROR;
-    deadline_from_now(&deadline, 200u);
+    deadline_from_now(&deadline, TRANSMIT_CANCEL_WAIT_MS);
     pthread_mutex_lock(&g_transmit_lock);
     atomic_store(&g_transmit_waiting, true);
     (void)pthread_cond_broadcast(&g_transmit_cond);
     while (!atomic_load(&g_transmit_cancelled)) {
-      if (pthread_cond_timedwait(&g_transmit_cond, &g_transmit_lock, &deadline) != 0) {
+      if (pthread_cond_timedwait(&g_transmit_cond, &g_transmit_lock,
+                                 &deadline) != 0) {
         break;
       }
     }
@@ -513,34 +557,37 @@ LONG SCardTransmit(SCARDHANDLE hCard, const SCARD_IO_REQUEST *pioSendPci, LPCBYT
     pthread_mutex_unlock(&g_transmit_lock);
     return rv;
   }
-  if (g_mock.transmit_fail || (g_mock.transmit_fail_once && !g_mock.transmit_fail_once_used)) {
+  if (g_mock.transmit_fail ||
+      (g_mock.transmit_fail_once && !g_mock.transmit_fail_once_used)) {
     if (g_mock.transmit_fail_once) {
       g_mock.transmit_fail_once_used = true;
     }
     return SCARD_F_COMM_ERROR;
   }
-  if (is_select_apdu(pbSendBuffer, cbSendLength, &with_le)) {
+  if (is_select_apdu(send_buffer, send_length, &with_le)) {
     if (g_mock.select_first_fail && with_le) {
-      pbRecvBuffer[0] = 0x6Au;
-      pbRecvBuffer[1] = 0x82u;
-      *pcbRecvLength = 2u;
+      recv_buffer[0] = SW_FILE_NOT_FOUND_HI;
+      recv_buffer[1] = SW_FILE_NOT_FOUND_LO;
+      *recv_length = SW_LEN;
       return SCARD_S_SUCCESS;
     }
-    pbRecvBuffer[0] = 0x90u;
-    pbRecvBuffer[1] = 0x00u;
-    *pcbRecvLength = 2u;
+    recv_buffer[0] = SW_NO_ERROR_HI;
+    recv_buffer[1] = 0x00u;
+    *recv_length = SW_LEN;
     return SCARD_S_SUCCESS;
   }
-  if (g_mock.transmit_response_len > *pcbRecvLength) {
+  if (g_mock.transmit_response_len > *recv_length) {
     return SCARD_E_INSUFFICIENT_BUFFER;
   }
-  memcpy(pbRecvBuffer, g_mock.transmit_response, g_mock.transmit_response_len);
-  *pcbRecvLength = (DWORD)g_mock.transmit_response_len;
+  (void)pcsc_fido_copy_bytes(recv_buffer, g_mock.transmit_response_len, 0u,
+                             g_mock.transmit_response,
+                             g_mock.transmit_response_len);
+  *recv_length = (DWORD)g_mock.transmit_response_len;
   return SCARD_S_SUCCESS;
 }
 
-LONG SCardCancel(SCARDCONTEXT hContext) {
-  (void)hContext;
+LONG scard_cancel(SCARDCONTEXT context) {
+  (void)context;
   pthread_mutex_lock(&g_transmit_lock);
   if (atomic_load(&g_transmit_waiting)) {
     atomic_store(&g_cancel_during_transmit, true);

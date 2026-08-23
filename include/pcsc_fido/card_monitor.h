@@ -22,17 +22,17 @@
 #include <stdatomic.h>
 #include <stdbool.h>
 
-typedef void (*pcsc_fido_card_monitor_wake_fn)(void *ctx);
+typedef void (*pcsc_fido_card_monitor_wake_fn_t)(void* ctx);
 
 typedef struct {
   pthread_t thread;
   atomic_bool stop;
   bool running;
-  pcsc_fido_card_monitor_wake_fn wake;
-  void *wake_ctx;
+  pcsc_fido_card_monitor_wake_fn_t wake;
+  void* wake_ctx;
 } pcsc_fido_card_monitor_t;
 
-PCSC_FIDO_NODISCARD bool pcsc_fido_card_monitor_start(pcsc_fido_card_monitor_t *monitor,
-                                                      pcsc_fido_card_monitor_wake_fn wake,
-                                                      void *wake_ctx);
-void pcsc_fido_card_monitor_stop(pcsc_fido_card_monitor_t *monitor);
+PCSC_FIDO_NODISCARD bool pcsc_fido_card_monitor_start(
+    pcsc_fido_card_monitor_t* monitor, pcsc_fido_card_monitor_wake_fn_t wake,
+    void* wake_ctx);
+void pcsc_fido_card_monitor_stop(pcsc_fido_card_monitor_t* monitor);

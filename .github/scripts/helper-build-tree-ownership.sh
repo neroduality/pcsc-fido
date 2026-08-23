@@ -24,7 +24,13 @@
 set -euo pipefail
 
 pcsc_fido_refuse_root_make() {
+  # Ephemeral GHA job containers run as root on a disposable workspace (same as
+  # nero-nfc Main CI lint). Bind-mounted local CI sets HOST_UID and must drop
+  # to the host user before make -- refuse when that drop did not happen.
   if [[ $(id -u) -eq 0 ]]; then
+    if [[ ${GITHUB_ACTIONS:-false} == true && -z ${HOST_UID:-} ]]; then
+      return 0
+    fi
     printf '%s\n' \
       'error: do not run `sudo make` for build, test, sanitizer, or clean targets (that root-owns build/).' \
       '  Build and test as your normal user: `make`, `make test`, `make verify`' \
@@ -34,19 +40,24 @@ pcsc_fido_refuse_root_make() {
   fi
 }
 
+# True if path itself or any descendant is root-owned (nested mkdir-as-root case).
+pcsc_fido_tree_has_root_owned() {
+  local path="$1"
+  [[ -e ${path} ]] || return 1
+  [[ -n $(find "${path}" -user root -print -quit 2>/dev/null) ]]
+}
+
 pcsc_fido_repair_tree_ownership() {
-  local uid gid user path owner_uid
+  local uid gid path
   uid="$(id -u)"
   gid="$(id -g)"
-  user="$(id -un)"
 
   for path in "$@"; do
     [[ -n ${path} ]] || continue
     [[ -e ${path} ]] || continue
-    owner_uid="$(stat -c '%u' "${path}")"
-    if [[ ${owner_uid} -eq 0 ]]; then
-      printf 'repairing root-owned %s (using %s)\n' "${path}" "${user}" >&2
-      chown -R "${uid}:${gid}" "${path}"
+    if pcsc_fido_tree_has_root_owned "${path}"; then
+      # Best-effort; container restore is preferred for bind-mount leftovers.
+      chown -R "${uid}:${gid}" "${path}" 2>/dev/null || true
     fi
   done
 }
@@ -64,10 +75,12 @@ pcsc_fido_local_repair_tree_for_removal() {
   done
 }
 
-# Paths written as root by container CI on bind mounts — docker chown is appropriate here.
+# Paths written as root by container CI on bind mounts -- docker chown is appropriate here.
 pcsc_fido_uses_container_ownership_restore() {
   case "$1" in
-    build | scan-build-report | dist | .github/pinned/markdownlint/node_modules) return 0 ;;
+    build | build/* | .lint-kit-org | scan-build-report | dist | .github/pinned/markdownlint/node_modules)
+      return 0
+      ;;
     *) return 1 ;;
   esac
 }

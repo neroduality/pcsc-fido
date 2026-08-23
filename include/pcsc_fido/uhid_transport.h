@@ -26,29 +26,36 @@
 #include <stdint.h>
 #include <limits.h>
 
+/* Spec prefixes for docs/spec-traceability.yaml: CTAP2.3 CTAPHID pid.codes
+ * (cite in-file as [CTAP2.3], [CTAPHID], [pid.codes]). */
 enum {
-  PCSC_FIDO_DAEMON_CAP_WINK = 0x01u,
-  PCSC_FIDO_DAEMON_CAP_CBOR = 0x04u,
-  PCSC_FIDO_DAEMON_ERR_INVALID_CMD = 0x01u,
-  PCSC_FIDO_DAEMON_ERR_INVALID_LEN = 0x03u,
-  PCSC_FIDO_DAEMON_ERR_INVALID_SEQ = 0x04u,
-  PCSC_FIDO_DAEMON_ERR_CHANNEL_BUSY = 0x06u,
+  PCSC_FIDO_DAEMON_CAP_WINK = 0x01u,         /* [CTAPHID] */
+  PCSC_FIDO_DAEMON_CAP_CBOR = 0x04u,         /* [CTAPHID] */
+  PCSC_FIDO_DAEMON_ERR_INVALID_CMD = 0x01u,  /* [CTAPHID] */
+  PCSC_FIDO_DAEMON_ERR_INVALID_LEN = 0x03u,  /* [CTAPHID] */
+  PCSC_FIDO_DAEMON_ERR_INVALID_SEQ = 0x04u,  /* [CTAPHID] */
+  PCSC_FIDO_DAEMON_ERR_CHANNEL_BUSY = 0x06u, /* [CTAPHID] */
   PCSC_FIDO_DAEMON_ERR_OTHER = 0x7Fu,
-  PCSC_FIDO_DAEMON_CTAP2_ERR_KEEPALIVE_CANCEL = 0x2Du,
+  PCSC_FIDO_DAEMON_CTAP2_ERR_KEEPALIVE_CANCEL = 0x2Du, /* [CTAP2.3] §8.2 */
   PCSC_FIDO_DAEMON_PENDING_MAX = PCSC_FIDO_CTAPHID_MAX_PAYLOAD,
+  PCSC_FIDO_UHID_USB_VENDOR_ID = 0x1209u,             /* [pid.codes] */
+  PCSC_FIDO_UHID_USB_PRODUCT_ID = 0xF1D0u,            /* [pid.codes] */
+  PCSC_FIDO_UHID_KEEPALIVE_STATUS_PROCESSING = 0x01u, /* [CTAPHID] */
 };
 
-PCSC_FIDO_STATIC_ASSERT(PCSC_FIDO_DAEMON_PENDING_MAX <= UINT16_MAX,
-                        "daemon pending max must fit CTAPHID 16-bit length field");
+PCSC_FIDO_STATIC_ASSERT(
+    PCSC_FIDO_DAEMON_PENDING_MAX <= UINT16_MAX,
+    "daemon pending max must fit CTAPHID 16-bit length field");
 
-PCSC_FIDO_NODISCARD bool pcsc_fido_daemon_send_hid_response(int fd, uint32_t cid, uint8_t cmd,
-                                                            const uint8_t *payload,
-                                                            size_t payload_len);
-PCSC_FIDO_NODISCARD bool pcsc_fido_daemon_send_hid_error(int fd, uint32_t cid, uint8_t code);
+PCSC_FIDO_NODISCARD bool pcsc_fido_daemon_send_hid_response(
+    int fd, uint32_t cid, uint8_t cmd, const uint8_t* payload,
+    size_t payload_len);
+PCSC_FIDO_NODISCARD bool pcsc_fido_daemon_send_hid_error(int fd, uint32_t cid,
+                                                         uint8_t code);
 PCSC_FIDO_NODISCARD bool pcsc_fido_daemon_send_keepalive(int fd, uint32_t cid);
 
 PCSC_FIDO_NODISCARD bool pcsc_fido_daemon_create_uhid_device(int fd);
 void pcsc_fido_daemon_destroy_uhid_device(int fd);
 
-PCSC_FIDO_NODISCARD bool pcsc_fido_daemon_output_packet_data(const struct uhid_event *ev,
-                                                             const uint8_t **data);
+PCSC_FIDO_NODISCARD bool pcsc_fido_daemon_output_packet_data(
+    const struct uhid_event* ev, const uint8_t** data);

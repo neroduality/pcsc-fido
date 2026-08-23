@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Dependabot version updates (yearly cadence — 1st of January).
+# Dependabot version updates (yearly cadence -- 1st of January).
 # https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
 
 version: 2
@@ -25,6 +25,7 @@ updates:
       interval: yearly
     cooldown:
       default-days: 7
+    rebase-strategy: disabled
     open-pull-requests-limit: 10
 
   - package-ecosystem: npm
@@ -33,6 +34,7 @@ updates:
       interval: yearly
     cooldown:
       default-days: 7
+    rebase-strategy: disabled
     open-pull-requests-limit: 5
 
   - package-ecosystem: pip
@@ -41,4 +43,5 @@ updates:
       interval: yearly
     cooldown:
       default-days: 7
+    rebase-strategy: disabled
     open-pull-requests-limit: 5

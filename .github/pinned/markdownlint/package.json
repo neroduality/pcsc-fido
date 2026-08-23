@@ -4,6 +4,9 @@
   "description": "Hash-pinned markdownlint-cli for OpenSSF Scorecard Pinned-Dependencies",
   "license": "Apache-2.0",
   "dependencies": {
-    "markdownlint-cli": "0.49.0"
+    "markdownlint-cli": "0.49.1"
+  },
+  "overrides": {
+    "brace-expansion": "5.0.9"
   }
 }

@@ -16,6 +16,7 @@
 # limitations under the License.
 
 # Shared CI entry: Debug unit tests (ASan+UBSan via PCSC_FIDO_DEBUG_SANITIZERS) and scan-build.
+# Always wipes CMake trees first (``make/wipe-host-build-trees.sh ci``) -- no cache reuse.
 #
 # Usage (from pcsc-fido root):
 #   bash .github/scripts/ci-run-tests.sh
@@ -52,12 +53,10 @@ if [[ "$(uname -s)" == "Linux" ]]; then
   fi
 fi
 
+bash "${repo_root}/make/wipe-host-build-trees.sh" ci
+
 build_dir="${repo_root}/build/ci"
 jobs="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)"
-
-if [[ ${PCSC_FIDO_LOCAL_CI_KEEP_BUILDS:-0} != "1" ]]; then
-  pcsc_fido_rm_repo_path "${repo_root}" "build/ci"
-fi
 
 cmake -S "${repo_root}" -B "${build_dir}" \
   -DCMAKE_BUILD_TYPE=Debug \

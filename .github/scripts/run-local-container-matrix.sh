@@ -16,7 +16,7 @@
 # limitations under the License.
 
 # Debian + Fedora container matrix (Debug unit tests + scan-build). Part of ``--main`` in
-# run-local-ci-suite.sh; runnable alone when you only want the matrix.
+# run-ci-locally.sh; runnable alone when you only want the matrix.
 #
 # Usage:
 #   bash .github/scripts/run-local-container-matrix.sh
@@ -47,7 +47,7 @@ Environment:
   SKIP_OPENSSF              Set to 1 to skip OpenSSF Scorecard (same as --skip-openssf)
 
 Related:
-  run-local-ci-suite.sh           Full presets (lint, matrix, coverage, release, …)
+  run-ci-locally.sh           Full presets (lint, matrix, coverage, release, ...)
   run-local-line-coverage.sh      gcov/lcov HTML under build/coverage-html/
   run-local-release-packages.sh   Release .deb/.rpm builds into dist/
 
@@ -57,6 +57,7 @@ EOF
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 # shellcheck source=helper-container-bind-mount.sh
+# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/helper-container-bind-mount.sh"
 
 RUN_DEBIAN=1
@@ -116,7 +117,7 @@ esac
 run_in_image() {
   local image="$1"
   local label="$2"
-  printf '\n── %s (%s) ──\n' "${label}" "${image}"
+  printf '\n-- %s (%s) --\n' "${label}" "${image}"
   # shellcheck disable=SC2016
   pcsc_fido_run_bind_mount_container \
     -- \
@@ -150,4 +151,4 @@ else
   printf '\n(skip OpenSSF Scorecard)\n'
 fi
 
-printf '\n── container matrix finished successfully ──\n'
+printf '\n-- container matrix finished successfully --\n'

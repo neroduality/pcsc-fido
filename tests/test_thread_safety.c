@@ -14,10 +14,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "test_caps.h"
+
 #include "pcsc_fido/pcsc_bridge.h"
 
 #include <pthread.h>
 #include <stdio.h>
+#include "pcsc_fido/pcsc_log.h"
 
 enum {
   ITERATIONS = 10000,
@@ -25,53 +28,60 @@ enum {
 
 static int failures;
 
-static void expect_true(int condition, const char *message) {
+static void expect_true(int condition, const char* message) {
   if (!condition) {
-    fprintf(stderr, "FAIL: %s\n", message);
+    pcsc_fido_log(PCSC_FIDO_LOG_ERROR, "FAIL: %s", message);
     failures++;
   }
 }
 
-static void *cancel_loop(void *arg) {
+static void* cancel_loop(void* arg) {
   (void)arg;
   for (int i = 0; i < ITERATIONS; i++) {
     pcsc_fido_bridge_cancel();
   }
-  return nullptr;
+  return PCSC_FIDO_NULL;
 }
 
-static void *reset_loop(void *arg) {
+static void* reset_loop(void* arg) {
   (void)arg;
   for (int i = 0; i < ITERATIONS; i++) {
     pcsc_fido_bridge_reset();
   }
-  return nullptr;
+  return PCSC_FIDO_NULL;
 }
 
-static void *exchange_invalid_loop(void *arg) {
+static void* exchange_invalid_loop(void* arg) {
   (void)arg;
   for (int i = 0; i < ITERATIONS; i++) {
-    uint8_t response[8];
-    char err[128];
-    (void)pcsc_fido_bridge_exchange(nullptr, 0xFFu, nullptr, 0u, response, sizeof(response),
-                                    nullptr, err, sizeof(err));
+    uint8_t response[TEST_LIT_8];
+    char err[TEST_CAP_128];
+    (void)pcsc_fido_bridge_exchange(
+        PCSC_FIDO_NULL, TEST_LIT_0XFFU, PCSC_FIDO_NULL, 0u, response,
+        sizeof(response), PCSC_FIDO_NULL, err, sizeof(err));
   }
-  return nullptr;
+  return PCSC_FIDO_NULL;
 }
 
 int main(void) {
   pthread_t cancel_thread;
   pthread_t reset_thread;
   pthread_t exchange_thread;
-  expect_true(pthread_create(&cancel_thread, nullptr, cancel_loop, nullptr) == 0,
+  expect_true(pthread_create(&cancel_thread, PCSC_FIDO_NULL, cancel_loop,
+                             PCSC_FIDO_NULL) == 0,
               "cancel thread starts");
-  expect_true(pthread_create(&reset_thread, nullptr, reset_loop, nullptr) == 0,
+  expect_true(pthread_create(&reset_thread, PCSC_FIDO_NULL, reset_loop,
+                             PCSC_FIDO_NULL) == 0,
               "reset thread starts");
-  expect_true(pthread_create(&exchange_thread, nullptr, exchange_invalid_loop, nullptr) == 0,
+  expect_true(pthread_create(&exchange_thread, PCSC_FIDO_NULL,
+                             exchange_invalid_loop, PCSC_FIDO_NULL) == 0,
               "exchange thread starts");
-  expect_true(pthread_join(cancel_thread, nullptr) == 0, "cancel thread joins");
-  expect_true(pthread_join(reset_thread, nullptr) == 0, "reset thread joins");
-  expect_true(pthread_join(exchange_thread, nullptr) == 0, "exchange thread joins");
+  expect_true(pthread_join(cancel_thread, PCSC_FIDO_NULL) == 0,
+              "cancel thread joins");
+  expect_true(pthread_join(reset_thread, PCSC_FIDO_NULL) == 0,
+              "reset thread joins");
+  expect_true(pthread_join(exchange_thread, PCSC_FIDO_NULL) == 0,
+              "exchange thread joins");
   pcsc_fido_bridge_reset();
   return failures == 0 ? 0 : 1;
 }

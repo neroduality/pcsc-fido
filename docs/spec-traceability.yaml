@@ -1,0 +1,472 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright (C) 2026 Nero Duality, LLC.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Spec traceability -- pcsc-fido
+#
+# Single authoritative manifest: normative (and explicitly tagged IMPL-POLICY)
+# literals mapped to source symbols. Enforced by the org lint-kit
+# `spec_traceability` job (`make lint`).
+#
+# Fields per entry:
+#   spec_prefix -- bare tag (no brackets). Source cites it as [TAG], e.g.
+#                 YAML `CTAP2.3` <-> comment `[CTAP2.3]` (same convention as
+#                 nero-nfc-reader-firmware).
+#   symbol      -- #define / enum / const name
+#   spec_value  -- normative numeric literal (decimal or 0x hex)
+#   ref         -- clause / table in the cited document
+#   source      -- repo-relative file containing the symbol
+#
+# Primary CTAP reference: FIDO CTAP 2.3 Proposed Standard (2026-02-26), same as nero-nfc.
+
+constants:
+
+  - spec_prefix: CTAP2.3
+    symbol: PCSC_FIDO_AID_LEN
+    spec_value: "8"
+    ref: "[DERIVED] FIDO CTAP 2.3 §11.3.3 -- FIDO2 AID RID A000000647 is 5 octets and PIX 2F0001 is 3 octets, totaling 8."
+    source: include/pcsc_fido/apdu.h
+
+  - spec_prefix: CTAP2.3
+    symbol: PCSC_FIDO_APDU_CLA_PROPRIETARY
+    spec_value: "0x80"
+    ref: "FIDO CTAP 2.3 §11.3.5.1 -- NFCCTAP command class byte (proprietary short CLA)."
+    source: include/pcsc_fido/apdu.h
+
+  - spec_prefix: CTAP2.3
+    symbol: PCSC_FIDO_APDU_INS_CTAP
+    spec_value: "0x10"
+    ref: "FIDO CTAP 2.3 §11.3.7.1 NFCCTAP_MSG"
+    source: include/pcsc_fido/apdu.h
+
+  - spec_prefix: CTAP2.3
+    symbol: PCSC_FIDO_CLIENT_DATA_HASH_LEN
+    spec_value: "32"
+    ref: "FIDO CTAP 2.3 §6.1 / [WebAuthn] -- clientDataHash is a 32-byte SHA-256 digest."
+    source: include/pcsc_fido/daemon_policy.h
+
+  - spec_prefix: CTAP2.3
+    symbol: PCSC_FIDO_CTAP2_CMD_CLIENT_PIN
+    spec_value: "0x06"
+    ref: "FIDO CTAP 2.3 §6.5.5 -- authenticatorClientPIN command code 06h."
+    source: include/pcsc_fido/apdu.h
+
+  - spec_prefix: CTAP2.3
+    symbol: PCSC_FIDO_CTAP2_CMD_GET_ASSERTION
+    spec_value: "0x02"
+    ref: "FIDO CTAP 2.3 §6.2 -- authenticatorGetAssertion command code 02h."
+    source: include/pcsc_fido/apdu.h
+
+  - spec_prefix: CTAP2.3
+    symbol: PCSC_FIDO_CTAP2_CMD_GET_INFO
+    spec_value: "0x04"
+    ref: "FIDO CTAP 2.3 §6.4 -- authenticatorGetInfo command code 04h."
+    source: include/pcsc_fido/apdu.h
+
+  - spec_prefix: CTAP2.3
+    symbol: PCSC_FIDO_CTAP2_CMD_MAKE_CREDENTIAL
+    spec_value: "0x01"
+    ref: "FIDO CTAP 2.3 §6.1 -- authenticatorMakeCredential command code 01h."
+    source: include/pcsc_fido/apdu.h
+
+  - spec_prefix: CTAP2.3
+    symbol: PCSC_FIDO_CTAP2_CMD_SELECTION
+    spec_value: "0x0B"
+    ref: "FIDO CTAP 2.3 §6.9 -- authenticatorSelection (0x0B)."
+    source: include/pcsc_fido/apdu.h
+
+  - spec_prefix: CTAP2.3
+    symbol: PCSC_FIDO_CTAP2_OK
+    spec_value: "0x00"
+    ref: "FIDO CTAP 2.3 §8.2 Status codes -- 0x00 is CTAP1_ERR_SUCCESS/CTAP2_OK and indicates success."
+    source: include/pcsc_fido/apdu.h
+
+  - spec_prefix: CTAP2.3
+    symbol: PCSC_FIDO_DAEMON_CTAP2_ERR_KEEPALIVE_CANCEL
+    spec_value: "0x2D"
+    ref: "FIDO CTAP 2.3 §8.2 -- CTAP2_ERR_KEEPALIVE_CANCEL = 2Dh."
+    source: include/pcsc_fido/uhid_transport.h
+
+  - spec_prefix: CTAP2.3
+    symbol: PCSC_FIDO_GET_ASSERTION_KEY_CLIENT_DATA_HASH
+    spec_value: "0x02"
+    ref: "FIDO CTAP 2.3 §6.2 authenticatorGetAssertion -- request member clientDataHash (0x02)."
+    source: include/pcsc_fido/daemon_policy.h
+
+  - spec_prefix: CTAPHID
+    symbol: PCSC_FIDO_CTAPHID_CBOR
+    spec_value: "0x10"
+    ref: "FIDO CTAP 2.3 §11.2.9.1.2 -- CTAPHID_CBOR (0x10)."
+    source: include/pcsc_fido/apdu.h
+
+  - spec_prefix: CTAPHID
+    symbol: PCSC_FIDO_CTAPHID_MAX_FRAMED_PAYLOAD_EXACT
+    spec_value: "7609"
+    ref: "[DERIVED] FIDO CTAP 2.3 §11.2.4-11.2.5 -- max framed payload 57 + 128x59 = 7609."
+    source: include/pcsc_fido/ctaphid.h
+
+  - spec_prefix: CTAPHID
+    symbol: PCSC_FIDO_DAEMON_CAP_CBOR
+    spec_value: "0x04"
+    ref: "FIDO CTAP 2.3 §11.2.9.1.3 -- CAPABILITY_CBOR (0x04) in CTAPHID_INIT response."
+    source: include/pcsc_fido/uhid_transport.h
+
+  - spec_prefix: CTAPHID
+    symbol: PCSC_FIDO_DAEMON_CAP_WINK
+    spec_value: "0x01"
+    ref: "FIDO CTAP 2.3 §11.2.9.1.3 -- CAPABILITY_WINK (0x01) in CTAPHID_INIT response."
+    source: include/pcsc_fido/uhid_transport.h
+
+  - spec_prefix: CTAPHID
+    symbol: PCSC_FIDO_DAEMON_ERR_CHANNEL_BUSY
+    spec_value: "0x06"
+    ref: "FIDO CTAP 2.3 §11.2.9.1.6 -- ERR_CHANNEL_BUSY (0x06)."
+    source: include/pcsc_fido/uhid_transport.h
+
+  - spec_prefix: CTAPHID
+    symbol: PCSC_FIDO_DAEMON_ERR_INVALID_CMD
+    spec_value: "0x01"
+    ref: "FIDO CTAP 2.3 §11.2.9.1.6 -- ERR_INVALID_CMD (0x01)."
+    source: include/pcsc_fido/uhid_transport.h
+
+  - spec_prefix: CTAPHID
+    symbol: PCSC_FIDO_DAEMON_ERR_INVALID_LEN
+    spec_value: "0x03"
+    ref: "FIDO CTAP 2.3 §11.2.9.1.6 -- ERR_INVALID_LEN (0x03)."
+    source: include/pcsc_fido/uhid_transport.h
+
+  - spec_prefix: CTAPHID
+    symbol: PCSC_FIDO_DAEMON_ERR_INVALID_SEQ
+    spec_value: "0x04"
+    ref: "FIDO CTAP 2.3 §11.2.9.1.6 -- ERR_INVALID_SEQ (0x04)."
+    source: include/pcsc_fido/uhid_transport.h
+
+  - spec_prefix: CTAPHID
+    symbol: PCSC_FIDO_EXCHANGE_KEEPALIVE_INTERVAL_MS
+    spec_value: "100"
+    ref: "FIDO CTAP 2.3 §11.2.9.1.7 -- KEEPALIVE SHOULD be sent at least every 100 ms while processing."
+    source: include/pcsc_fido/pcsc_bridge_limits.h
+
+  - spec_prefix: CTAPHID
+    symbol: PCSC_FIDO_HID_BROADCAST_CID
+    spec_value: "0xFFFFFFFF"
+    ref: "FIDO CTAP 2.3 §11.2.1 -- broadcast channel identifier 0xFFFFFFFF."
+    source: include/pcsc_fido/ctaphid.h
+
+  - spec_prefix: CTAPHID
+    symbol: PCSC_FIDO_HID_CMD_CANCEL
+    spec_value: "0x11"
+    ref: "FIDO CTAP 2.3 §11.2.9.1.5 -- CTAPHID_CANCEL (0x11)."
+    source: include/pcsc_fido/ctaphid.h
+
+  - spec_prefix: CTAPHID
+    symbol: PCSC_FIDO_HID_CMD_CBOR
+    spec_value: "0x10"
+    ref: "FIDO CTAP 2.3 §11.2.9.1.2 -- CTAPHID_CBOR (0x10)."
+    source: include/pcsc_fido/ctaphid.h
+
+  - spec_prefix: CTAPHID
+    symbol: PCSC_FIDO_HID_CMD_ERROR
+    spec_value: "0x3F"
+    ref: "FIDO CTAP 2.3 §11.2.9.1.6 -- CTAPHID_ERROR (0x3F)."
+    source: include/pcsc_fido/ctaphid.h
+
+  - spec_prefix: CTAPHID
+    symbol: PCSC_FIDO_HID_CMD_INIT
+    spec_value: "0x06"
+    ref: "FIDO CTAP 2.3 §11.2.9.1.3 -- CTAPHID_INIT (0x06)."
+    source: include/pcsc_fido/ctaphid.h
+
+  - spec_prefix: CTAPHID
+    symbol: PCSC_FIDO_HID_CMD_KEEPALIVE
+    spec_value: "0x3B"
+    ref: "FIDO CTAP 2.3 §11.2.9.1.7 -- CTAPHID_KEEPALIVE (0x3B)."
+    source: include/pcsc_fido/ctaphid.h
+
+  - spec_prefix: CTAPHID
+    symbol: PCSC_FIDO_HID_CMD_LOCK
+    spec_value: "0x04"
+    ref: "FIDO CTAP 2.3 §11.2.9.2.2 -- CTAPHID_LOCK (0x04)."
+    source: include/pcsc_fido/ctaphid.h
+
+  - spec_prefix: CTAPHID
+    symbol: PCSC_FIDO_HID_CMD_MSG
+    spec_value: "0x03"
+    ref: "FIDO CTAP 2.3 §11.2.9.1.1 -- CTAPHID_MSG (0x03)."
+    source: include/pcsc_fido/ctaphid.h
+
+  - spec_prefix: CTAPHID
+    symbol: PCSC_FIDO_HID_CMD_PING
+    spec_value: "0x01"
+    ref: "FIDO CTAP 2.3 §11.2.9.1.4 -- CTAPHID_PING (0x01)."
+    source: include/pcsc_fido/ctaphid.h
+
+  - spec_prefix: CTAPHID
+    symbol: PCSC_FIDO_HID_CMD_WINK
+    spec_value: "0x08"
+    ref: "FIDO CTAP 2.3 §11.2.9.2.1 -- CTAPHID_WINK (0x08)."
+    source: include/pcsc_fido/ctaphid.h
+
+  - spec_prefix: CTAPHID
+    symbol: PCSC_FIDO_HID_CONT_PAYLOAD_MAX
+    spec_value: "59"
+    ref: "[DERIVED] FIDO CTAP 2.3 §11.2.5 -- continuation packet payload capacity 64 - 5 = 59."
+    source: include/pcsc_fido/ctaphid.h
+
+  - spec_prefix: CTAPHID
+    symbol: PCSC_FIDO_HID_INIT_NONCE_LEN
+    spec_value: "8"
+    ref: "FIDO CTAP 2.3 §11.2.9.1.3 -- CTAPHID_INIT request nonce length is 8 bytes."
+    source: include/pcsc_fido/ctaphid.h
+
+  - spec_prefix: CTAPHID
+    symbol: PCSC_FIDO_HID_INIT_PAYLOAD_MAX
+    spec_value: "57"
+    ref: "[DERIVED] FIDO CTAP 2.3 §11.2.4 -- init packet payload capacity 64 - 7 = 57."
+    source: include/pcsc_fido/ctaphid.h
+
+  - spec_prefix: CTAPHID
+    symbol: PCSC_FIDO_HID_INIT_RESP_PROTOCOL_VERSION
+    spec_value: "2"
+    ref: "FIDO CTAP 2.3 §11.2.9.1.3 -- CTAPHID protocol version identifier byte value 2."
+    source: include/pcsc_fido/ctaphid.h
+
+  - spec_prefix: CTAPHID
+    symbol: PCSC_FIDO_HID_PACKET_SIZE
+    spec_value: "64"
+    ref: "FIDO CTAP 2.3 §11.2.3 -- CTAPHID packet size is 64 bytes."
+    source: include/pcsc_fido/ctaphid.h
+
+  - spec_prefix: CTAPHID
+    symbol: PCSC_FIDO_HID_TYPE_INIT
+    spec_value: "0x80"
+    ref: "FIDO CTAP 2.3 §11.2.3 -- initialization packet type bit (CMD |= 0x80)."
+    source: include/pcsc_fido/ctaphid.h
+
+  - spec_prefix: CTAPHID
+    symbol: PCSC_FIDO_UHID_KEEPALIVE_STATUS_PROCESSING
+    spec_value: "0x01"
+    ref: "FIDO CTAP 2.3 §11.2.9.1.7 -- KEEPALIVE status PROCESSING (0x01)."
+    source: include/pcsc_fido/uhid_transport.h
+
+  - spec_prefix: IMPL-POLICY
+    symbol: PCSC_FIDO_BRIDGE_READER_ENUM_TIMEOUT_SEC
+    spec_value: "10"
+    ref: "Implementation policy -- reader enumeration wait budget (non-normative)."
+    source: include/pcsc_fido/pcsc_bridge_limits.h
+
+  - spec_prefix: IMPL-POLICY
+    symbol: PCSC_FIDO_CBOR_MAX_NESTING
+    spec_value: "32"
+    ref: "Implementation policy -- CBOR parse nesting depth cap (non-normative)."
+    source: include/pcsc_fido/cbor_util.h
+
+  - spec_prefix: IMPL-POLICY
+    symbol: PCSC_FIDO_CTAPHID_MAX_PAYLOAD
+    spec_value: "8192"
+    ref: "Implementation policy -- internal CTAPHID payload buffer ceiling (non-normative slack above 7609)."
+    source: include/pcsc_fido/ctaphid.h
+
+  - spec_prefix: IMPL-POLICY
+    symbol: PCSC_FIDO_ERR_MSG_MAX
+    spec_value: "256"
+    ref: "Implementation policy -- error message buffer capacity (non-normative)."
+    source: include/pcsc_fido/pcsc_bridge_limits.h
+
+  - spec_prefix: IMPL-POLICY
+    symbol: PCSC_FIDO_RATE_CTAPHID_DEFAULT
+    spec_value: "30"
+    ref: "Implementation policy -- CTAPHID request budget per window (non-normative)."
+    source: src/daemon_rate_limit.c
+
+  - spec_prefix: IMPL-POLICY
+    symbol: PCSC_FIDO_RATE_EXCHANGE_DEFAULT
+    spec_value: "10"
+    ref: "Implementation policy -- PC/SC exchange budget per window (non-normative)."
+    source: src/daemon_rate_limit.c
+
+  - spec_prefix: IMPL-POLICY
+    symbol: PCSC_FIDO_RATE_WINDOW_SEC_DEFAULT
+    spec_value: "90"
+    ref: "Implementation policy -- rate-limit window seconds (non-normative tuning)."
+    source: src/daemon_rate_limit.c
+
+  - spec_prefix: IMPL-POLICY
+    symbol: PCSC_FIDO_READER_LIST_RETRY_MS
+    spec_value: "200"
+    ref: "Implementation policy -- reader-list retry interval (non-normative tuning)."
+    source: include/pcsc_fido/pcsc_bridge_limits.h
+
+  - spec_prefix: IMPL-POLICY
+    symbol: PCSC_FIDO_READER_NAME_MAX
+    spec_value: "256"
+    ref: "Implementation policy -- PC/SC reader name capacity (non-normative)."
+    source: include/pcsc_fido/pcsc_bridge_limits.h
+
+  - spec_prefix: IMPL-POLICY
+    symbol: PCSC_FIDO_READER_STATUS_POLL_MS
+    spec_value: "250"
+    ref: "Implementation policy -- card-presence poll interval (non-normative tuning)."
+    source: include/pcsc_fido/pcsc_bridge_limits.h
+
+  - spec_prefix: IMPL-POLICY
+    symbol: PCSC_FIDO_WAIT_SEC_DEFAULT
+    spec_value: "60"
+    ref: "Implementation policy -- default wait/arm seconds (non-normative)."
+    source: include/pcsc_fido/pcsc_bridge_limits.h
+
+  - spec_prefix: ISO7816-4
+    symbol: PCSC_FIDO_APDU_CLA_ISO
+    spec_value: "0x00"
+    ref: "ISO/IEC 7816-4:2020 §5.4.1 -- 00h is the basic interindustry CLA (logical channel zero)."
+    source: include/pcsc_fido/apdu.h
+
+  - spec_prefix: ISO7816-4
+    symbol: PCSC_FIDO_APDU_INS_GET_RESPONSE
+    spec_value: "0xC0"
+    ref: "ISO/IEC 7816-4:2020 §5.5 / §11.8.1 -- GET RESPONSE instruction C0h."
+    source: include/pcsc_fido/apdu.h
+
+  - spec_prefix: ISO7816-4
+    symbol: PCSC_FIDO_APDU_INS_SELECT
+    spec_value: "0xA4"
+    ref: "ISO/IEC 7816-4:2020 §5.5 and §11.2.2 -- SELECT instruction byte is A4h."
+    source: include/pcsc_fido/apdu.h
+
+  - spec_prefix: ISO7816-4
+    symbol: PCSC_FIDO_APDU_P1_SELECT_BY_DF
+    spec_value: "0x04"
+    ref: "ISO/IEC 7816-4:2020 §11.2.2 -- SELECT P1=04h selects by DF name."
+    source: include/pcsc_fido/apdu.h
+
+  - spec_prefix: ISO7816-4
+    symbol: PCSC_FIDO_APDU_SW_BYTES_AVAILABLE
+    spec_value: "0x6100"
+    ref: "ISO/IEC 7816-4:2020 §5.6 -- SW1=61h indicates bytes still available (SW2 = remaining length)."
+    source: include/pcsc_fido/apdu_chain.h
+
+  - spec_prefix: ISO7816-4
+    symbol: PCSC_FIDO_SHORT_APDU_PAYLOAD_MAX
+    spec_value: "255"
+    ref: "ISO/IEC 7816-4:2020 §5.3.2 -- short APDU Lc/Le maximum 255."
+    source: include/pcsc_fido/apdu.h
+
+  - spec_prefix: ISO7816-4
+    symbol: PCSC_FIDO_SW_LEN
+    spec_value: "2"
+    ref: "ISO/IEC 7816-4:2020 §5.6 -- status word is two bytes (SW1 || SW2)."
+    source: include/pcsc_fido/apdu.h
+
+  - spec_prefix: ISO7816-4
+    symbol: PCSC_FIDO_SW_OK
+    spec_value: "0x9000"
+    ref: "ISO/IEC 7816-4:2020 §5.6 -- normal processing status word 9000h."
+    source: include/pcsc_fido/apdu.h
+
+  - spec_prefix: pid.codes
+    symbol: PCSC_FIDO_UHID_USB_PRODUCT_ID
+    spec_value: "0xF1D0"
+    ref: "pid.codes -- open-source VID 0x1209 product ID 0xF1D0 (community-convention FIDO HID PID; the value mirrors the FIDO HID usage page 0xF1D0, and the pid.codes 1209/F1D0 slot is registered as 'Pi Zero Security Key')."
+    source: include/pcsc_fido/uhid_transport.h
+
+  - spec_prefix: pid.codes
+    symbol: PCSC_FIDO_UHID_USB_VENDOR_ID
+    spec_value: "0x1209"
+    ref: "pid.codes -- USB vendor ID 0x1209 (open-source VID registry)."
+    source: include/pcsc_fido/uhid_transport.h
+
+  - spec_prefix: RFC8949
+    symbol: PCSC_FIDO_CBOR_AI_UINT16
+    spec_value: "25"
+    ref: "RFC 8949 §3 -- additional information 25 (uint16 follows)."
+    source: include/pcsc_fido/cbor_util.h
+
+  - spec_prefix: RFC8949
+    symbol: PCSC_FIDO_CBOR_AI_UINT32
+    spec_value: "26"
+    ref: "RFC 8949 §3 -- additional information 26 (uint32 follows)."
+    source: include/pcsc_fido/cbor_util.h
+
+  - spec_prefix: RFC8949
+    symbol: PCSC_FIDO_CBOR_AI_UINT64
+    spec_value: "27"
+    ref: "RFC 8949 §3 -- additional information 27 (uint64 follows)."
+    source: include/pcsc_fido/cbor_util.h
+
+  - spec_prefix: RFC8949
+    symbol: PCSC_FIDO_CBOR_AI_UINT8
+    spec_value: "24"
+    ref: "RFC 8949 §3 -- additional information 24 (uint8 follows)."
+    source: include/pcsc_fido/cbor_util.h
+
+  - spec_prefix: RFC8949
+    symbol: PCSC_FIDO_CBOR_FALSE
+    spec_value: "0xF4"
+    ref: "RFC 8949 §3.3 -- simple value false (0xF4)."
+    source: include/pcsc_fido/cbor_util.h
+
+  - spec_prefix: RFC8949
+    symbol: PCSC_FIDO_CBOR_MAJOR_ARRAY
+    spec_value: "4"
+    ref: "RFC 8949 §3.1 Table 1 -- major type 4 (array)."
+    source: include/pcsc_fido/cbor_util.h
+
+  - spec_prefix: RFC8949
+    symbol: PCSC_FIDO_CBOR_MAJOR_BYTES
+    spec_value: "2"
+    ref: "RFC 8949 §3.1 Table 1 -- major type 2 (byte string)."
+    source: include/pcsc_fido/cbor_util.h
+
+  - spec_prefix: RFC8949
+    symbol: PCSC_FIDO_CBOR_MAJOR_MAP
+    spec_value: "5"
+    ref: "RFC 8949 §3.1 Table 1 -- major type 5 (map)."
+    source: include/pcsc_fido/cbor_util.h
+
+  - spec_prefix: RFC8949
+    symbol: PCSC_FIDO_CBOR_MAJOR_NINT
+    spec_value: "1"
+    ref: "RFC 8949 §3.1 Table 1 -- major type 1 (negative integer)."
+    source: include/pcsc_fido/cbor_util.h
+
+  - spec_prefix: RFC8949
+    symbol: PCSC_FIDO_CBOR_MAJOR_SIMPLE
+    spec_value: "7"
+    ref: "RFC 8949 §3.1 Table 1 -- major type 7 (simple/float)."
+    source: include/pcsc_fido/cbor_util.h
+
+  - spec_prefix: RFC8949
+    symbol: PCSC_FIDO_CBOR_MAJOR_TAG
+    spec_value: "6"
+    ref: "RFC 8949 §3.1 Table 1 -- major type 6 (tag)."
+    source: include/pcsc_fido/cbor_util.h
+
+  - spec_prefix: RFC8949
+    symbol: PCSC_FIDO_CBOR_MAJOR_TEXT
+    spec_value: "3"
+    ref: "RFC 8949 §3.1 Table 1 -- major type 3 (text string)."
+    source: include/pcsc_fido/cbor_util.h
+
+  - spec_prefix: RFC8949
+    symbol: PCSC_FIDO_CBOR_MAJOR_UINT
+    spec_value: "0"
+    ref: "RFC 8949 §3.1 Table 1 -- major type 0 (unsigned integer)."
+    source: include/pcsc_fido/cbor_util.h
+
+  - spec_prefix: RFC8949
+    symbol: PCSC_FIDO_CBOR_TRUE
+    spec_value: "0xF5"
+    ref: "RFC 8949 §3.3 -- simple value true (0xF5)."
+    source: include/pcsc_fido/cbor_util.h

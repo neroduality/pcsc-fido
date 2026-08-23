@@ -24,9 +24,13 @@
 
 PCSC_FIDO_NODISCARD bool pcsc_fido_bridge_debug_enabled(void);
 
-void pcsc_fido_bridge_log_ctap2_request_summary(uint8_t hid_cmd, const uint8_t *payload,
+void pcsc_fido_bridge_log_ctap2_request_summary(uint8_t hid_cmd,
+                                                const uint8_t* payload,
                                                 size_t payload_len);
-void pcsc_fido_bridge_log_apdu_response_hex(const char *label, const uint8_t *rapdu,
+void pcsc_fido_bridge_log_apdu_response_hex(const char* label,
+                                            const uint8_t* rapdu,
                                             size_t rapdu_len);
-void pcsc_fido_bridge_log_get_assertion_summary(const uint8_t *rapdu, size_t rapdu_len);
-void pcsc_fido_bridge_log_make_credential_summary(const uint8_t *rapdu, size_t rapdu_len);
+void pcsc_fido_bridge_log_get_assertion_summary(const uint8_t* rapdu,
+                                                size_t rapdu_len);
+void pcsc_fido_bridge_log_make_credential_summary(const uint8_t* rapdu,
+                                                  size_t rapdu_len);

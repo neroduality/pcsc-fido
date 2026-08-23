@@ -17,7 +17,7 @@
 
 # Build a native or cross-compiled release package with CPack.
 # Native builds (amd64, arm64): run ctest before packaging.
-# Cross builds (--cross): SKIP_CTEST=1, BUILD_TESTING=OFF — unit tests skipped.
+# Cross builds (--cross): SKIP_CTEST=1, BUILD_TESTING=OFF -- unit tests skipped.
 #
 # Usage:
 #   bash .github/scripts/release-build-package.sh --format deb --arch amd64
@@ -166,7 +166,7 @@ if [[ $FORMAT == "rpm" ]] && command -v apt-get >/dev/null 2>&1 && ! command -v 
 fi
 
 cmake "${CMAKE_ARGS[@]}"
-printf '── compiler: %s ──\n' "$("${CC:-gcc}" --version | head -n1)"
+printf -- '-- compiler: %s --\n' "$("${CC:-gcc}" --version | head -n1)"
 cmake --build "$BUILD_DIR" -j"$(nproc 2>/dev/null || echo 2)"
 
 if [[ ${SKIP_CTEST:-0} != "1" ]]; then
@@ -200,5 +200,5 @@ if [[ $CROSS -eq 1 ]]; then
   fi
 fi
 
-printf '── release-build-package: %s %s complete ──\n' "$FORMAT" "$ARCH"
+printf -- '-- release-build-package: %s %s complete --\n' "$FORMAT" "$ARCH"
 printf '  artifacts: %s\n' "${artifacts[*]}"

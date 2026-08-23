@@ -23,10 +23,11 @@
 #include <stdint.h>
 #include <stdio.h>
 
-PCSC_FIDO_NODISCARD bool pcsc_fido_bridge_exchange(const char *reader_needle, uint8_t hid_cmd,
-                                                   const uint8_t *payload, size_t payload_len,
-                                                   uint8_t *response, size_t response_cap,
-                                                   size_t *response_len, char *err, size_t err_cap);
-PCSC_FIDO_NODISCARD bool pcsc_fido_bridge_list_readers(FILE *out, char *err, size_t err_cap);
+PCSC_FIDO_NODISCARD bool pcsc_fido_bridge_exchange(
+    const char* reader_needle, uint8_t hid_cmd, const uint8_t* payload,
+    size_t payload_len, uint8_t* response, size_t response_cap,
+    size_t* response_len, char* err, size_t err_cap);
+PCSC_FIDO_NODISCARD bool pcsc_fido_bridge_list_readers(FILE* out, char* err,
+                                                       size_t err_cap);
 void pcsc_fido_bridge_cancel(void);
 void pcsc_fido_bridge_reset(void);

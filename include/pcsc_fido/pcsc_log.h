@@ -24,5 +24,12 @@ typedef enum {
   PCSC_FIDO_LOG_DEBUG,
 } pcsc_fido_log_level_t;
 
-void pcsc_fido_log(pcsc_fido_log_level_t level, const char *fmt, ...)
-  __attribute__((format(printf, 2, 3)));
+enum {
+  // 1-based argument indices for the printf format attribute below.
+  PCSC_FIDO_LOG_FMT_ARG_INDEX = 2,
+  PCSC_FIDO_LOG_VARARGS_INDEX = 3,
+};
+
+void pcsc_fido_log(pcsc_fido_log_level_t level, const char* fmt, ...)
+    __attribute__((format(printf, PCSC_FIDO_LOG_FMT_ARG_INDEX,
+                          PCSC_FIDO_LOG_VARARGS_INDEX)));

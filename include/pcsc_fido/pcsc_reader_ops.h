@@ -28,24 +28,25 @@ typedef enum {
   PCSC_FIDO_READER_CTX_DAEMON,
 } pcsc_fido_reader_ctx_scope_t;
 
-PCSC_FIDO_NODISCARD bool pcsc_fido_reader_establish_context(SCARDCONTEXT *ctx,
-                                                            pcsc_fido_reader_ctx_scope_t scope,
-                                                            char *err, size_t err_cap);
-PCSC_FIDO_NODISCARD bool pcsc_fido_reader_list(SCARDCONTEXT ctx, char *buf, DWORD *buf_len,
-                                               char *err, size_t err_cap);
-PCSC_FIDO_NODISCARD bool pcsc_fido_reader_list_snapshot(SCARDCONTEXT ctx, char *buf, DWORD *buf_len,
-                                                        char *err, size_t err_cap);
-PCSC_FIDO_NODISCARD size_t pcsc_fido_reader_fill_status_states(const char *readers,
-                                                               size_t readers_len,
-                                                               SCARD_READERSTATE *states,
-                                                               size_t states_cap);
-PCSC_FIDO_NODISCARD const SCARD_IO_REQUEST *
-pcsc_fido_reader_pci_for_protocol(DWORD active_protocol);
-PCSC_FIDO_NODISCARD bool pcsc_fido_reader_confirm_card_present(SCARDCONTEXT ctx, const char *reader,
-                                                               char *err, size_t err_cap);
-PCSC_FIDO_NODISCARD bool pcsc_fido_reader_probe_fido_card(SCARDCONTEXT ctx, const char *reader);
-PCSC_FIDO_NODISCARD bool pcsc_fido_reader_select_and_wait(SCARDCONTEXT ctx,
-                                                          const char *reader_needle, char *reader,
-                                                          size_t reader_cap, char *err,
-                                                          size_t err_cap);
-PCSC_FIDO_NODISCARD bool pcsc_fido_reader_print_list(FILE *out, char *err, size_t err_cap);
+PCSC_FIDO_NODISCARD bool pcsc_fido_reader_establish_context(
+    SCARDCONTEXT* ctx, pcsc_fido_reader_ctx_scope_t scope, char* err,
+    size_t err_cap);
+PCSC_FIDO_NODISCARD bool pcsc_fido_reader_list(SCARDCONTEXT ctx, char* buf,
+                                               DWORD* buf_len, char* err,
+                                               size_t err_cap);
+PCSC_FIDO_NODISCARD bool pcsc_fido_reader_list_snapshot(
+    SCARDCONTEXT ctx, char* buf, DWORD* buf_len, char* err, size_t err_cap);
+PCSC_FIDO_NODISCARD size_t pcsc_fido_reader_fill_status_states(
+    const char* readers, size_t readers_len, SCARD_READERSTATE* states,
+    size_t states_cap);
+PCSC_FIDO_NODISCARD const SCARD_IO_REQUEST* pcsc_fido_reader_pci_for_protocol(
+    DWORD active_protocol);
+PCSC_FIDO_NODISCARD bool pcsc_fido_reader_confirm_card_present(
+    SCARDCONTEXT ctx, const char* reader, char* err, size_t err_cap);
+PCSC_FIDO_NODISCARD bool pcsc_fido_reader_probe_fido_card(SCARDCONTEXT ctx,
+                                                          const char* reader);
+PCSC_FIDO_NODISCARD bool pcsc_fido_reader_select_and_wait(
+    SCARDCONTEXT ctx, const char* reader_needle, char* reader,
+    size_t reader_cap, char* err, size_t err_cap);
+PCSC_FIDO_NODISCARD bool pcsc_fido_reader_print_list(FILE* out, char* err,
+                                                     size_t err_cap);

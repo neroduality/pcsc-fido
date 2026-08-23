@@ -28,16 +28,17 @@
 
 typedef struct {
   SCARDHANDLE card;
-  const SCARD_IO_REQUEST *send_pci;
+  const SCARD_IO_REQUEST* send_pci;
   uint64_t generation;
 } pcsc_fido_session_tx_t;
 
 PCSC_FIDO_NODISCARD bool pcsc_fido_session_is_ready(void);
-PCSC_FIDO_NODISCARD bool pcsc_fido_session_verify_ready(char *err, size_t err_cap);
-PCSC_FIDO_NODISCARD bool pcsc_fido_session_snapshot_tx(pcsc_fido_session_tx_t *tx, char *err,
-                                                       size_t err_cap);
-PCSC_FIDO_NODISCARD bool
-pcsc_fido_session_tx_is_current(const pcsc_fido_session_tx_t *tx) PCSC_FIDO_UNSEQUENCED;
+PCSC_FIDO_NODISCARD bool pcsc_fido_session_verify_ready(char* err,
+                                                        size_t err_cap);
+PCSC_FIDO_NODISCARD bool pcsc_fido_session_snapshot_tx(
+    pcsc_fido_session_tx_t* tx, char* err, size_t err_cap);
+PCSC_FIDO_NODISCARD bool pcsc_fido_session_tx_is_current(
+    const pcsc_fido_session_tx_t* tx) PCSC_FIDO_UNSEQUENCED;
 PCSC_FIDO_NODISCARD SCARDCONTEXT pcsc_fido_session_snapshot_context(void);
 
 void pcsc_fido_session_reset(void);
@@ -45,10 +46,9 @@ void pcsc_fido_session_cancel(void);
 PCSC_FIDO_NODISCARD bool pcsc_fido_session_cancel_requested(void);
 void pcsc_fido_session_clear_cancel(void);
 
-PCSC_FIDO_NODISCARD bool pcsc_fido_session_ensure(const char *reader_needle, char *err,
-                                                  size_t err_cap);
-PCSC_FIDO_NODISCARD bool pcsc_fido_session_transmit_chained(const pcsc_fido_session_tx_t *tx,
-                                                            const uint8_t *capdu, size_t capdu_len,
-                                                            uint8_t *rapdu, size_t rapdu_cap,
-                                                            size_t *rapdu_len, char *err,
-                                                            size_t err_cap);
+PCSC_FIDO_NODISCARD bool pcsc_fido_session_ensure(const char* reader_needle,
+                                                  char* err, size_t err_cap);
+PCSC_FIDO_NODISCARD bool pcsc_fido_session_transmit_chained(
+    const pcsc_fido_session_tx_t* tx, const uint8_t* capdu, size_t capdu_len,
+    uint8_t* rapdu, size_t rapdu_cap, size_t* rapdu_len, char* err,
+    size_t err_cap);

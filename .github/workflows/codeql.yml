@@ -14,32 +14,41 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Code scanning — C via CMake build of pcsc-fido.
-# Runs on schedule only (plus workflow_dispatch).
-# Local reproduction: bash .github/scripts/ci-codeql-build.sh (CodeQL CLI + database create is CI-only today)
+# Code scanning -- C via CMake build of pcsc-fido (Debian sid container, same
+# family as Main CI).
+# Runs on manual dispatch only.
+# Local reproduction: make codeql-local
+# Download SARIF: workflow run -> Artifacts -> codeql-cpp-sarif
 name: CodeQL
 
 on:
-  schedule:
-    # Quarterly — 1st of Jan/Apr/Jul/Oct at 06:32 UTC.
-    - cron: "32 6 1 1,4,7,10 *"
   workflow_dispatch:
 
 concurrency:
   group: codeql-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+  # Cancel superseded pull-request runs; never cancel a default-branch scan.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   analyze:
-    name: Analyze (c)
+    name: Analyze (cpp)
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    container:
+      image: debian:sid-slim@sha256:54f7a23f03be1e9fe2849c61a7455588ea29b84c1659440f8ece2aea4c9871af
+      options: --platform linux/amd64
+    timeout-minutes: 360
     permissions:
       contents: read
       security-events: write
+      # Required when CodeQL init/analyze run inside a job container (GitHub docs).
+      actions: read
 
     env:
       # Manual traced C++ builds are incompatible with overlay-base caching on
@@ -47,27 +56,60 @@ jobs:
       CODEQL_OVERLAY_DATABASE_MODE: none
 
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      # Inline: repo scripts are not available until after checkout.
+      - name: Install checkout prerequisites
+        run: |
+          if command -v apt-get >/dev/null 2>&1; then
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y --no-install-recommends ca-certificates git tar
+          elif command -v dnf >/dev/null 2>&1; then
+            dnf install -y --setopt=install_weak_deps=False ca-certificates git tar
+            dnf clean all
+          else
+            printf 'error: unsupported base image (need apt-get or dnf)\n' >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Install dependencies
+      - name: Bootstrap container (CA certs, git)
+        run: bash .github/scripts/ci-bootstrap-container.sh
+
+      - name: Install build dependencies
         env:
-          AUTO_INSTALL_LINUX_DEPS: 1
-          PCSC_FIDO_ALLOW_SUDO_DEPS: 1
+          AUTO_INSTALL_LINUX_DEPS: "1"
+          INSTALL_DEPS: "1"
+          PCSC_FIDO_DEPS_SCOPE: "build"
         run: bash .github/scripts/install-linux-deps.sh
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
+        uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         with:
           languages: cpp
           build-mode: manual
           config-file: .github/codeql/codeql-config.yml
+          # Bundle URL required (bare "2.26.3" is treated as a local path). Matches local CLI v2.26.3.
+          tools: https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.26.3/codeql-bundle-linux64.tar.zst
 
       - name: CodeQL traced build (CMake)
         run: bash .github/scripts/ci-codeql-build.sh
 
       - name: Perform CodeQL analysis
-        uses: github/codeql-action/analyze@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
+        id: analyze
+        uses: github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         with:
           category: "/language:cpp"
+          output: codeql-results
+
+      - name: Upload CodeQL SARIF artifact
+        if: always() && steps.analyze.outcome != 'skipped'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codeql-cpp-sarif
+          path: codeql-results/
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 6

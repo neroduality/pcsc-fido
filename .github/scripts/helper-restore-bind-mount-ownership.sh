@@ -20,7 +20,8 @@
 # Usage (from pcsc-fido root):
 #   bash .github/scripts/helper-restore-bind-mount-ownership.sh [path ...]
 #
-# Default paths: build scan-build-report dist .github/pinned/markdownlint/node_modules
+# Default paths: .lint-kit-org build dist scan-build-report
+#                .github/pinned/markdownlint/node_modules
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

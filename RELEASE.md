@@ -19,7 +19,7 @@ limitations under the License.
 
 Publish **`pcsc-fido`** packages, source, and checksums from an annotated `v*` tag.
 
-Pushing a tag runs [`.github/workflows/release.yml`](.github/workflows/release.yml). CI builds packages, writes `SHA256SUMS`, and creates the GitHub Release from [`.github/release-notes.md`](.github/release-notes.md) (`release-render-notes.sh` substitutes `@TAG@` / `@VERSION@`). For release-specific notes, edit the release description in the GitHub UI after CI finishes.
+Pushing a tag runs [`.github/workflows/release.yml`](.github/workflows/release.yml). That workflow first runs **Main CI** for the tagged commit (reusable `main-ci.yml`: lint container + Debian/Fedora test matrix), then builds packages, writes `SHA256SUMS`, and creates the GitHub Release from [`.github/release-notes.md`](.github/release-notes.md) (`release-render-notes.sh` substitutes `@TAG@` / `@VERSION@`). For release-specific notes, edit the release description in the GitHub UI after CI finishes.
 
 ## Maintainer checklist
 
@@ -39,7 +39,7 @@ Local verification before tagging (optional):
 ```bash
 make verify
 make lint
-make ci-suite CI_SUITE_FLAGS=--release   # optional local amd64 .deb smoke
+make ci-local CI_LOCAL_FLAGS=--release   # optional local amd64 .deb smoke
 ```
 
 Preview rendered release notes (optional):
@@ -57,7 +57,7 @@ The release publishes **14 files**:
 - Source tarball: `pcsc-fido-VERSION.tar.gz`
 - Checksums: `SHA256SUMS`
 
-CI verifies asset counts and filenames. Unit tests run in the release lint gate on amd64 (`ci-lint.sh`). Native package builds also run `ctest` with `BUILD_TESTING=ON`; cross-compiled ports skip unit tests (`SKIP_CTEST=1`) and are file-checked only.
+CI verifies asset counts and filenames. Release invokes **Main CI** for the tagged commit before packaging. Native package builds also run `ctest` with `BUILD_TESTING=ON`; cross-compiled ports skip unit tests (`SKIP_CTEST=1`) and are file-checked only.
 
 ## Verify downloads
 
@@ -66,5 +66,3 @@ sha256sum -c SHA256SUMS
 ```
 
 GitHub also displays a SHA-256 digest per release asset.
-
-Last Updated: 2026-05-30

@@ -14,13 +14,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# SBOM generation (Syft) + vulnerability scan (Grype on SBOM); SARIF → Code Scanning.
+# SBOM generation (Syft) + vulnerability scan (Grype on SBOM); SARIF -> Code Scanning.
 # Runs on schedule only (plus workflow_dispatch). Local: .github/scripts/run-local-supply-chain.sh
 name: Supply chain (Syft + Grype)
 
 on:
   schedule:
-    # Quarterly — 1st of Jan/Apr/Jul/Oct at 22:18 UTC.
+    # Quarterly -- 1st of Jan/Apr/Jul/Oct at 22:18 UTC.
     - cron: "18 22 1 1,4,7,10 *"
   workflow_dispatch:
 
@@ -46,7 +46,7 @@ jobs:
       actions: read
 
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -67,9 +67,37 @@ jobs:
           sbom: sbom.spdx.json
           fail-build: false
           severity-cutoff: high
+          output-format: sarif
+
+      # Grype SBOM SARIF often omits physicalLocation.artifactLocation.uri (packages
+      # have no on-disk path). GitHub Code Scanning rejects that with
+      # locationFromSarifResult: expected artifact location (anchore/grype#2235).
+      - name: Patch Grype SARIF artifact locations
+        if: success() || failure()
+        env:
+          SARIF_PATH: ${{ steps.grype.outputs.sarif }}
+        run: |
+          set -euo pipefail
+          if [[ -z ${SARIF_PATH} || ! -f ${SARIF_PATH} ]]; then
+            printf 'warning: no Grype SARIF to patch\n' >&2
+            exit 0
+          fi
+          jq --arg uri sbom.spdx.json '
+            .runs[]?.results[]?.locations |=
+              (map(. + {
+                physicalLocation: ((.physicalLocation // {}) + {
+                  artifactLocation: ((.physicalLocation.artifactLocation // {}) + {
+                    uri: (if ((.physicalLocation.artifactLocation.uri // "") == "")
+                          then $uri
+                          else .physicalLocation.artifactLocation.uri end)
+                  })
+                })
+              }))
+          ' "${SARIF_PATH}" >"${SARIF_PATH}.patched"
+          mv "${SARIF_PATH}.patched" "${SARIF_PATH}"
 
       - name: Upload Grype SARIF to code scanning
-        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
+        uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         if: success() || failure()
         continue-on-error: true
         with:

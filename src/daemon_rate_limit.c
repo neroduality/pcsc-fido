@@ -14,18 +14,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#define _POSIX_C_SOURCE 200809L
-
 #include "pcsc_fido/daemon_rate_limit.h"
+#include "pcsc_fido/pcsc_bridge_limits.h"
+#include "pcsc_fido/pcsc_fido_parse.h"
 #include "pcsc_fido/pcsc_log.h"
 
-#include <errno.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include "pcsc_fido/mem_util.h"
 
+/* Spec prefixes for docs/spec-traceability.yaml: IMPL-POLICY */
 enum {
   PCSC_FIDO_RATE_WINDOW_SEC_DEFAULT = 90u,
   PCSC_FIDO_RATE_CTAPHID_DEFAULT = 30u,
@@ -43,30 +44,29 @@ static pcsc_fido_rate_bucket_t g_ctaphid_bucket;
 static pcsc_fido_rate_bucket_t g_exchange_bucket;
 
 static bool rate_limit_enabled(void) {
-  const char *v = getenv("PCSC_FIDO_RATE_LIMIT");
-  return v == nullptr || v[0] == '\0' || strcmp(v, "0") != 0;
+  const char* v = getenv("PCSC_FIDO_RATE_LIMIT");
+  return v == PCSC_FIDO_NULL || v[0] == '\0' || strcmp(v, "0") != 0;
 }
 
-static unsigned read_rate_env(const char *name, unsigned default_value) {
-  const char *v = getenv(name);
-  char *end = nullptr;
-  unsigned long parsed;
-  if (v == nullptr || v[0] == '\0') {
+static unsigned read_rate_env(const char* name, unsigned default_value) {
+  const char* v = getenv(name);
+  uint32_t parsed = 0u;
+  if (v == PCSC_FIDO_NULL || v[0] == '\0') {
     return default_value;
   }
-  errno = 0;
-  parsed = strtoul(v, &end, 10);
-  if (errno != 0 || end == v || *end != '\0' || parsed == 0UL ||
-      parsed > (unsigned long)PCSC_FIDO_RATE_VALUE_MAX) {
-    pcsc_fido_log(PCSC_FIDO_LOG_INFO, "invalid %s=%s; using default %u", name, v, default_value);
+  if (!pcsc_fido_parse_u32(v, &parsed) || parsed == 0u ||
+      parsed > (uint32_t)PCSC_FIDO_RATE_VALUE_MAX) {
+    pcsc_fido_log(PCSC_FIDO_LOG_INFO, "invalid %s=%s; using default %u", name,
+                  v, default_value);
     return default_value;
   }
   return (unsigned)parsed;
 }
 
-static bool allow_bucket(pcsc_fido_rate_bucket_t *bucket, unsigned limit, unsigned window_sec) {
-  const time_t now = time(nullptr);
-  if (bucket == nullptr) {
+static bool allow_bucket(pcsc_fido_rate_bucket_t* bucket, unsigned limit,
+                         unsigned window_sec) {
+  const time_t now = time(PCSC_FIDO_NULL);
+  if (bucket == PCSC_FIDO_NULL) {
     return false;
   }
   if (bucket->window_start == 0 || now < bucket->window_start ||
@@ -81,11 +81,11 @@ static bool allow_bucket(pcsc_fido_rate_bucket_t *bucket, unsigned limit, unsign
   return true;
 }
 
-static bool allow_with_limit(pcsc_fido_rate_bucket_t *bucket, const char *limit_env,
-                             unsigned default_limit) {
+static bool allow_with_limit(pcsc_fido_rate_bucket_t* bucket,
+                             const char* limit_env, unsigned default_limit) {
   bool allowed;
-  const unsigned window_sec =
-    read_rate_env("PCSC_FIDO_RATE_WINDOW_SEC", PCSC_FIDO_RATE_WINDOW_SEC_DEFAULT);
+  const unsigned window_sec = read_rate_env("PCSC_FIDO_RATE_WINDOW_SEC",
+                                            PCSC_FIDO_RATE_WINDOW_SEC_DEFAULT);
   const unsigned limit = read_rate_env(limit_env, default_limit);
   if (!rate_limit_enabled()) {
     return true;
@@ -108,7 +108,7 @@ bool pcsc_fido_rate_limit_allow_exchange(void) {
 
 void pcsc_fido_rate_limit_reset(void) {
   pthread_mutex_lock(&g_rate_lock);
-  memset(&g_ctaphid_bucket, 0, sizeof(g_ctaphid_bucket));
-  memset(&g_exchange_bucket, 0, sizeof(g_exchange_bucket));
+  pcsc_fido_zero_bytes(&g_ctaphid_bucket, sizeof(g_ctaphid_bucket));
+  pcsc_fido_zero_bytes(&g_exchange_bucket, sizeof(g_exchange_bucket));
   pthread_mutex_unlock(&g_rate_lock);
 }

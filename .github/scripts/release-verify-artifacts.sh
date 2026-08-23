@@ -106,4 +106,4 @@ if ((fail != 0)); then
   exit 1
 fi
 
-printf '── release-verify-artifacts: dist/ ready to publish ──\n'
+printf -- '-- release-verify-artifacts: dist/ ready to publish --\n'

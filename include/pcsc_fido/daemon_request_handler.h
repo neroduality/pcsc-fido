@@ -23,9 +23,9 @@
 
 typedef struct {
   int fd;
-  const uint32_t *assigned_cid;
+  const uint32_t* assigned_cid;
 } pcsc_fido_daemon_request_context_t;
 
-void pcsc_fido_daemon_handle_hid_request(const pcsc_fido_daemon_request_context_t *ctx,
-                                         uint32_t request_cid, uint8_t cmd, const uint8_t *payload,
-                                         size_t payload_len);
+void pcsc_fido_daemon_handle_hid_request(
+    const pcsc_fido_daemon_request_context_t* ctx, uint32_t request_cid,
+    uint8_t cmd, const uint8_t* payload, size_t payload_len);

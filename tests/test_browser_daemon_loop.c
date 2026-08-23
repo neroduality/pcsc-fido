@@ -14,8 +14,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#define _POSIX_C_SOURCE 200809L
-
 #include "pcsc_fido/browser_daemon.h"
 #include "pcsc_fido/ctaphid.h"
 #include "pcsc_fido/daemon_signals.h"
@@ -33,14 +31,37 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include "pcsc_fido/mem_util.h"
+#include "pcsc_fido/pcsc_log.h"
 
 enum {
   FAKE_UHID_FD = 120,
+  FAKE_TIME_START = 1000000,
+  INITIAL_STOP_AFTER_READS = 3,
+  LOOP_DEFAULT_STOP_AFTER_READS = 4,
+  UHID_STOP_TEST_READ_LIMIT = 5,
+  MALFORMED_OUTPUT_READ_LIMIT = 3,
+  UHID_OUTPUT_READ_CALL = 2,
+  FRAMING_HEADER_C_INDEX = 2,
+  PACKET_CHANNEL_INDEX = 3,
+  PACKET_COMMAND_INDEX = 4,
+  PACKET_BCNT_HIGH_INDEX = 5,
+  PACKET_BCNT_LOW_INDEX = 6,
+  PACKET_LENGTH_INDEX = 7,
+  PACKET_PAYLOAD_INDEX = 8,
+  FRAMING_HEADER_N_BYTE = 0x4Eu,
+  FRAMING_HEADER_F_BYTE = 0x46u,
+  FRAMING_HEADER_C_BYTE = 0x43u,
+  HID_INIT_PACKET_MARKER = 0x80u,
+  BYTE_MASK = 0xFFu,
+  TEST_PING_PAYLOAD_BYTE = 0xAAu,
+  POLL_FALLBACK_TIMEOUT_MS = 1000,
+  POLL_MAX_TIMEOUT_MS = 10,
 };
 
-static time_t g_fake_time = 1000000;
+static time_t g_fake_time = FAKE_TIME_START;
 static int g_read_calls;
-static int g_stop_after_reads = 3;
+static int g_stop_after_reads = INITIAL_STOP_AFTER_READS;
 static int g_open_fail;
 static int g_uhid_create_fail;
 static int g_eintr_once;
@@ -55,48 +76,49 @@ static int g_read_io_error_once;
 static int g_request_stop_after_ping;
 static unsigned g_uhid_create_count;
 static unsigned g_uhid_destroy_count;
-static uint8_t g_ping_payload[] = {0xAAu};
+static uint8_t g_ping_payload[] = {TEST_PING_PAYLOAD_BYTE};
 
-extern int __real_nanosleep(const struct timespec *req, struct timespec *rem);
+extern int __real_nanosleep(const struct timespec* req, struct timespec* rem);
 
 // rem matches nanosleep(2); LD --wrap requires a non-const second parameter.
-int __wrap_nanosleep(const struct timespec *req PCSC_FIDO_MAYBE_UNUSED,
-                     // cppcheck-suppress constParameterPointer
-                     struct timespec *rem PCSC_FIDO_MAYBE_UNUSED) {
+int __wrap_nanosleep(const struct timespec* req PCSC_FIDO_MAYBE_UNUSED,
+                     struct timespec* rem PCSC_FIDO_MAYBE_UNUSED) {
   const struct timespec yield = {.tv_sec = 0, .tv_nsec = 1000000L};
   (void)req;
   return __real_nanosleep(&yield, rem);
 }
 
-time_t __wrap_time(time_t *t) {
+time_t __wrap_time(time_t* t) {
   g_fake_time++;
-  if (t != nullptr) {
+  if (t != PCSC_FIDO_NULL) {
     *t = g_fake_time;
   }
   return g_fake_time;
 }
 
-extern int __real_open(const char *pathname, int flags, ...);
-extern ssize_t __real_read(int fd, void *buf, size_t count);
-extern ssize_t __real_write(int fd, const void *buf, size_t count);
+extern int __real_open(const char* pathname, int flags, ...);
+extern ssize_t __real_read(int fd, void* buf, size_t count);
+extern ssize_t __real_write(int fd, const void* buf, size_t count);
 extern int __real_close(int fd);
-extern int __real_poll(struct pollfd *fds, nfds_t nfds, int timeout);
+extern int __real_poll(struct pollfd* fds, nfds_t nfds, int timeout);
 
-int __wrap_open(const char *pathname, int flags, ...) {
+int __wrap_open(const char* pathname, int flags, ...) {
   (void)flags;
-  if (g_open_fail && pathname != nullptr && strcmp(pathname, "/dev/uhid") == 0) {
+  if (g_open_fail && pathname != PCSC_FIDO_NULL &&
+      strcmp(pathname, "/dev/uhid") == 0) {
     errno = EACCES;
     return -1;
   }
-  if (pathname != nullptr && strcmp(pathname, "/dev/uhid") == 0) {
+  if (pathname != PCSC_FIDO_NULL && strcmp(pathname, "/dev/uhid") == 0) {
     return FAKE_UHID_FD;
   }
   return __real_open(pathname, flags);
 }
 
-ssize_t __wrap_read(int fd, void *buf, size_t count) {
-  struct uhid_event *ev;
-  if (fd != FAKE_UHID_FD || buf == nullptr || count < sizeof(struct uhid_event)) {
+ssize_t __wrap_read(int fd, void* buf, size_t count) {
+  struct uhid_event* ev;
+  if (fd != FAKE_UHID_FD || buf == PCSC_FIDO_NULL ||
+      count < sizeof(struct uhid_event)) {
     return __real_read(fd, buf, count);
   }
   if (g_eintr_once) {
@@ -117,37 +139,40 @@ ssize_t __wrap_read(int fd, void *buf, size_t count) {
     errno = EIO;
     return -1;
   }
-  ev = (struct uhid_event *)buf;
-  memset(ev, 0, sizeof(*ev));
+  ev = (struct uhid_event*)buf;
+  pcsc_fido_zero_bytes(ev, sizeof(*ev));
   g_read_calls++;
   if (g_read_calls == 1) {
     ev->type = UHID_START;
     return (ssize_t)sizeof(*ev);
   }
-  if (g_read_calls == 2) {
+  if (g_read_calls == UHID_OUTPUT_READ_CALL) {
     uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE];
     ev->type = UHID_OUTPUT;
     ev->u.output.size = PCSC_FIDO_HID_PACKET_SIZE;
-    memset(packet, 0, sizeof(packet));
+    pcsc_fido_zero_bytes(packet, sizeof(packet));
     if (g_malformed_output_once) {
       g_malformed_output_once = 0;
-      packet[0] = 0x4Eu;
-      packet[1] = 0x46u;
-      packet[2] = 0x43u;
-      packet[3] = 0x01u;
-      packet[4] = (uint8_t)(0x80u | PCSC_FIDO_HID_CMD_CBOR);
-      packet[5] = 0xFFu;
-      packet[6] = 0xFFu;
+      packet[0] = FRAMING_HEADER_N_BYTE;
+      packet[1] = FRAMING_HEADER_F_BYTE;
+      packet[FRAMING_HEADER_C_INDEX] = FRAMING_HEADER_C_BYTE;
+      packet[PACKET_CHANNEL_INDEX] = 0x01u;
+      packet[PACKET_COMMAND_INDEX] =
+          (uint8_t)(HID_INIT_PACKET_MARKER | PCSC_FIDO_HID_CMD_CBOR);
+      packet[PACKET_BCNT_HIGH_INDEX] = BYTE_MASK;
+      packet[PACKET_BCNT_LOW_INDEX] = BYTE_MASK;
     } else {
-      packet[0] = 0x4Eu;
-      packet[1] = 0x46u;
-      packet[2] = 0x43u;
-      packet[3] = 0x01u;
-      packet[4] = (uint8_t)(0x80u | PCSC_FIDO_HID_CMD_PING);
-      packet[7] = (uint8_t)sizeof(g_ping_payload);
-      packet[8] = g_ping_payload[0];
+      packet[0] = FRAMING_HEADER_N_BYTE;
+      packet[1] = FRAMING_HEADER_F_BYTE;
+      packet[FRAMING_HEADER_C_INDEX] = FRAMING_HEADER_C_BYTE;
+      packet[PACKET_CHANNEL_INDEX] = 0x01u;
+      packet[PACKET_COMMAND_INDEX] =
+          (uint8_t)(HID_INIT_PACKET_MARKER | PCSC_FIDO_HID_CMD_PING);
+      packet[PACKET_LENGTH_INDEX] = (uint8_t)sizeof(g_ping_payload);
+      packet[PACKET_PAYLOAD_INDEX] = g_ping_payload[0];
     }
-    memcpy(ev->u.output.data, packet, sizeof(packet));
+    (void)pcsc_fido_copy_bytes(ev->u.output.data, sizeof(packet), 0u, packet,
+                               sizeof(packet));
     if (g_request_stop_after_ping) {
       g_request_stop_after_ping = 0;
       pcsc_fido_daemon_test_request_stop();
@@ -166,9 +191,10 @@ ssize_t __wrap_read(int fd, void *buf, size_t count) {
   return (ssize_t)sizeof(*ev);
 }
 
-ssize_t __wrap_write(int fd, const void *buf, size_t count) {
-  if (fd == FAKE_UHID_FD && buf != nullptr && count >= sizeof(struct uhid_event)) {
-    const struct uhid_event *ev = (const struct uhid_event *)buf;
+ssize_t __wrap_write(int fd, const void* buf, size_t count) {
+  if (fd == FAKE_UHID_FD && buf != PCSC_FIDO_NULL &&
+      count >= sizeof(struct uhid_event)) {
+    const struct uhid_event* ev = (const struct uhid_event*)buf;
     if (ev->type == UHID_CREATE2) {
       g_uhid_create_count++;
     } else if (ev->type == UHID_DESTROY) {
@@ -193,19 +219,19 @@ int __wrap_close(int fd) {
   return __real_close(fd);
 }
 
-static void maybe_request_stop_once(int *flag) {
-  if (flag != nullptr && *flag != 0) {
+static void maybe_request_stop_once(int* flag) {
+  if (flag != PCSC_FIDO_NULL && *flag != 0) {
     *flag = 0;
     pcsc_fido_daemon_test_request_stop();
   }
 }
 
-int __wrap_poll(struct pollfd *fds, nfds_t nfds, int timeout) {
+int __wrap_poll(struct pollfd* fds, nfds_t nfds, int timeout) {
   nfds_t i;
   if (pcsc_fido_daemon_stop_requested()) {
     return 0;
   }
-  if (fds == nullptr || nfds == 0u) {
+  if (fds == PCSC_FIDO_NULL || nfds == 0u) {
     return __real_poll(fds, nfds, timeout);
   }
   for (i = 0u; i < nfds; i++) {
@@ -228,7 +254,8 @@ int __wrap_poll(struct pollfd *fds, nfds_t nfds, int timeout) {
   if (!g_poll_wrap_enabled) {
     for (i = 0u; i < nfds; i++) {
       int signal_fd = pcsc_fido_daemon_signal_poll_fd();
-      if (signal_fd >= 0 && fds[i].fd == signal_fd && (fds[i].events & POLLIN) != 0) {
+      if (signal_fd >= 0 && fds[i].fd == signal_fd &&
+          (fds[i].events & POLLIN) != 0) {
         int rv = __real_poll(&fds[i], 1, 0);
         if (rv > 0 && (fds[i].revents & POLLIN) != 0) {
           return rv;
@@ -242,10 +269,10 @@ int __wrap_poll(struct pollfd *fds, nfds_t nfds, int timeout) {
       }
     }
     if (timeout < 0) {
-      timeout = 1000;
+      timeout = POLL_FALLBACK_TIMEOUT_MS;
     }
-    if (timeout > 10) {
-      timeout = 10;
+    if (timeout > POLL_MAX_TIMEOUT_MS) {
+      timeout = POLL_MAX_TIMEOUT_MS;
     }
     return __real_poll(fds, nfds, timeout);
   }
@@ -265,17 +292,18 @@ int __wrap_poll(struct pollfd *fds, nfds_t nfds, int timeout) {
 
 static int failures;
 
-static void expect_true(int condition, const char *message) {
+static void expect_true(int condition, const char* message) {
   if (!condition) {
-    fprintf(stderr, "FAIL: %s\n", message);
+    pcsc_fido_log(PCSC_FIDO_LOG_ERROR, "FAIL: %s", message);
     failures++;
   }
 }
 
 static void reset_loop_test_state(void) {
-  expect_true(setenv("PCSC_FIDO_VIRTUAL_KEY", "always", 1) == 0, "set always mode");
+  expect_true(setenv("PCSC_FIDO_VIRTUAL_KEY", "always", 1) == 0,
+              "set always mode");
   g_read_calls = 0;
-  g_stop_after_reads = 4;
+  g_stop_after_reads = LOOP_DEFAULT_STOP_AFTER_READS;
   g_open_fail = 0;
   g_uhid_create_fail = 0;
   g_eintr_once = 0;
@@ -297,15 +325,16 @@ static void reset_loop_test_state(void) {
 static char g_argv0[] = "pcsc-fido";
 
 static void daemon_main_loop_handles_ping_and_close(void) {
-  char *argv[] = {g_argv0, nullptr};
+  char* argv[] = {g_argv0, PCSC_FIDO_NULL};
   mock_pcsc_reset();
   mock_pcsc_set_readers("Loop Test Reader 00 00");
   reset_loop_test_state();
-  expect_true(pcsc_fido_browser_daemon_main(1, argv) == 0, "daemon loop exits cleanly");
+  expect_true(pcsc_fido_browser_daemon_main(1, argv) == 0,
+              "daemon loop exits cleanly");
 }
 
 static void daemon_main_with_fd_entry(void) {
-  char *argv[] = {g_argv0, nullptr};
+  char* argv[] = {g_argv0, PCSC_FIDO_NULL};
   mock_pcsc_reset();
   mock_pcsc_set_readers("Loop Test Reader 00 00");
   reset_loop_test_state();
@@ -314,97 +343,112 @@ static void daemon_main_with_fd_entry(void) {
 }
 
 static void daemon_stop_request_stops_loop(void) {
-  char *argv[] = {g_argv0, nullptr};
+  char* argv[] = {g_argv0, PCSC_FIDO_NULL};
   mock_pcsc_reset();
   mock_pcsc_set_readers("Loop Test Reader 00 00");
   reset_loop_test_state();
-  g_stop_after_reads = 4;
+  g_stop_after_reads = LOOP_DEFAULT_STOP_AFTER_READS;
   g_stop_after_close = 0;
   g_request_stop_after_ping = 1;
-  expect_true(pcsc_fido_browser_daemon_main(1, argv) == 0, "daemon exits after stop request");
+  expect_true(pcsc_fido_browser_daemon_main(1, argv) == 0,
+              "daemon exits after stop request");
 }
 
 static void daemon_open_uhid_failure(void) {
-  char *argv[] = {g_argv0, nullptr};
+  char* argv[] = {g_argv0, PCSC_FIDO_NULL};
   mock_pcsc_reset();
   reset_loop_test_state();
   g_open_fail = 1;
-  expect_true(pcsc_fido_browser_daemon_main(1, argv) == 1, "open failure exits 1");
+  expect_true(pcsc_fido_browser_daemon_main(1, argv) == 1,
+              "open failure exits 1");
 }
 
 static void daemon_uhid_create_failure(void) {
-  char *argv[] = {g_argv0, nullptr};
+  char* argv[] = {g_argv0, PCSC_FIDO_NULL};
   mock_pcsc_reset();
   reset_loop_test_state();
   g_uhid_create_fail = 1;
-  expect_true(pcsc_fido_browser_daemon_main(1, argv) == 1, "UHID create failure exits 1");
+  expect_true(pcsc_fido_browser_daemon_main(1, argv) == 1,
+              "UHID create failure exits 1");
 }
 
 static void daemon_read_eintr_and_short_read(void) {
-  char *argv[] = {g_argv0, nullptr};
+  char* argv[] = {g_argv0, PCSC_FIDO_NULL};
   mock_pcsc_reset();
   mock_pcsc_set_readers("Loop Test Reader 00 00");
   reset_loop_test_state();
   g_eintr_once = 1;
   g_short_read_once = 1;
-  expect_true(pcsc_fido_browser_daemon_main(1, argv) == 0, "EINTR and short read handled");
+  expect_true(pcsc_fido_browser_daemon_main(1, argv) == 0,
+              "EINTR and short read handled");
 }
 
 static void daemon_read_io_error_exits_nonzero(void) {
-  char *argv[] = {g_argv0, nullptr};
+  char* argv[] = {g_argv0, PCSC_FIDO_NULL};
   mock_pcsc_reset();
   mock_pcsc_set_readers("Loop Test Reader 00 00");
   reset_loop_test_state();
   g_stop_after_close = 0;
   g_read_io_error_once = 1;
-  g_stop_after_reads = 4;
-  expect_true(pcsc_fido_browser_daemon_main(1, argv) == 1, "read I/O error exits 1");
+  g_stop_after_reads = LOOP_DEFAULT_STOP_AFTER_READS;
+  expect_true(pcsc_fido_browser_daemon_main(1, argv) == 1,
+              "read I/O error exits 1");
 }
 
 static void daemon_uhid_stop_resets_bridge(void) {
-  char *argv[] = {g_argv0, nullptr};
+  char* argv[] = {g_argv0, PCSC_FIDO_NULL};
   mock_pcsc_reset();
   mock_pcsc_set_readers("Loop Test Reader 00 00");
   reset_loop_test_state();
   g_uhid_stop_once = 1;
-  g_stop_after_reads = 5;
+  g_stop_after_reads = UHID_STOP_TEST_READ_LIMIT;
   expect_true(pcsc_fido_browser_daemon_main(1, argv) == 0, "UHID_STOP handled");
 }
 
 static void daemon_assembly_error(void) {
-  char *argv[] = {g_argv0, nullptr};
+  char* argv[] = {g_argv0, PCSC_FIDO_NULL};
   mock_pcsc_reset();
   mock_pcsc_set_readers("Loop Test Reader 00 00");
   reset_loop_test_state();
   g_malformed_output_once = 1;
-  g_stop_after_reads = 3;
-  expect_true(pcsc_fido_browser_daemon_main(1, argv) == 0, "assembly error handled");
+  g_stop_after_reads = MALFORMED_OUTPUT_READ_LIMIT;
+  expect_true(pcsc_fido_browser_daemon_main(1, argv) == 0,
+              "assembly error handled");
 }
 
 static void daemon_tap_arm_expires_virtual_key(void) {
-  static const bool sequence[] = {false, true, true};
-  char *argv[] = {g_argv0, nullptr};
+  static const bool TAP_ARM_EXPIRES_SEQUENCE[] = {false, true, true};
+  char* argv[] = {g_argv0, PCSC_FIDO_NULL};
   mock_pcsc_reset();
   mock_pcsc_set_readers("Loop Test Reader 00 00");
-  mock_pcsc_set_status_present_sequence(sequence, sizeof(sequence) / sizeof(sequence[0]));
+  mock_pcsc_set_status_present_sequence(
+      TAP_ARM_EXPIRES_SEQUENCE,
+      sizeof(TAP_ARM_EXPIRES_SEQUENCE) / sizeof(TAP_ARM_EXPIRES_SEQUENCE[0]));
   reset_loop_test_state();
-  expect_true(setenv("PCSC_FIDO_VIRTUAL_KEY", "tap-arm", 1) == 0, "set tap-arm mode");
+  expect_true(setenv("PCSC_FIDO_VIRTUAL_KEY", "tap-arm", 1) == 0,
+              "set tap-arm mode");
   expect_true(setenv("PCSC_FIDO_ARM_SEC", "5", 1) == 0, "set short arm window");
   g_poll_timeout_zero_once = 1;
   g_raise_after_timeout_once = 1;
-  expect_true(pcsc_fido_browser_daemon_main(1, argv) == 0, "tap-arm daemon exits cleanly");
-  expect_true(g_uhid_create_count > 0u, "tap-arm creates virtual key after card wake");
-  expect_true(g_uhid_destroy_count > 0u, "tap-arm destroys virtual key after expiry");
+  expect_true(pcsc_fido_browser_daemon_main(1, argv) == 0,
+              "tap-arm daemon exits cleanly");
+  expect_true(g_uhid_create_count > 0u,
+              "tap-arm creates virtual key after card wake");
+  expect_true(g_uhid_destroy_count > 0u,
+              "tap-arm destroys virtual key after expiry");
 }
 
 static void daemon_tap_arm_card_wake_arms_key(void) {
-  static const bool sequence[] = {false, true, true};
-  char *argv[] = {g_argv0, nullptr};
+  static const bool TAP_ARM_CARD_WAKE_SEQUENCE[] = {false, true, true};
+  char* argv[] = {g_argv0, PCSC_FIDO_NULL};
   mock_pcsc_reset();
   mock_pcsc_set_readers("Loop Test Reader 00 00");
-  mock_pcsc_set_status_present_sequence(sequence, sizeof(sequence) / sizeof(sequence[0]));
+  mock_pcsc_set_status_present_sequence(
+      TAP_ARM_CARD_WAKE_SEQUENCE, sizeof(TAP_ARM_CARD_WAKE_SEQUENCE) /
+                                      sizeof(TAP_ARM_CARD_WAKE_SEQUENCE[0]));
   reset_loop_test_state();
-  expect_true(setenv("PCSC_FIDO_VIRTUAL_KEY", "tap-arm", 1) == 0, "set tap-arm mode");
+  expect_true(setenv("PCSC_FIDO_VIRTUAL_KEY", "tap-arm", 1) == 0,
+              "set tap-arm mode");
   expect_true(setenv("PCSC_FIDO_ARM_SEC", "5", 1) == 0, "set short arm window");
   g_poll_timeout_zero_once = 1;
   g_raise_after_timeout_once = 1;

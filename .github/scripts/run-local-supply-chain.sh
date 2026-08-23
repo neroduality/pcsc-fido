@@ -15,7 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Reproduce the Syft → Grype pipeline locally using Docker or Podman (same family as CI:
+# Reproduce the Syft -> Grype pipeline locally using Docker or Podman (same family as CI:
 # `.github/workflows/supply-chain-sbom.yml`).
 #
 # Usage (from anywhere):
@@ -40,7 +40,7 @@ Environment:
   SUPPLY_CHAIN_VERBOSE=1      Pass -v into Syft and Grype (more progress on stderr)
 
 Note: Grype downloads a vulnerability DB on first use (and whenever the cache volume is empty).
-      Without a host-mounted cache, each ephemeral container run repeats that download — it can
+      Without a host-mounted cache, each ephemeral container run repeats that download -- it can
       look \"stuck\" for several minutes with no output. This script mounts a persistent cache.
 
 EOF
@@ -66,7 +66,7 @@ fi
 SYFT_IMAGE="${SYFT_IMAGE:-anchore/syft:v1.36.0}"
 GRYPE_IMAGE="${GRYPE_IMAGE:-anchore/grype:v0.92.0}"
 
-# Persist caches — otherwise every `docker run --rm` rebuilds Grype's DB download (minutes, often silent).
+# Persist caches -- otherwise every `docker run --rm` rebuilds Grype's DB download (minutes, often silent).
 _chain_cache="${SUPPLY_CHAIN_TOOL_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/nero-supply-chain-tools}"
 _syft_cache="${_chain_cache}/syft"
 _grype_cache="${_chain_cache}/grype"
@@ -96,9 +96,9 @@ if [[ ${SUPPLY_CHAIN_VERBOSE:-0} == "1" ]]; then
   grype_cli=(-v "${grype_cli[@]}")
 fi
 
-printf '\n── Syft (%s) ──\n' "${SYFT_IMAGE}"
+printf '\n-- Syft (%s) --\n' "${SYFT_IMAGE}"
 printf 'Repo: %s\n' "${REPO_ROOT}"
-printf 'Tool cache (host → container): %s → /root/.cache/syft\n' "${_syft_cache}" >&2
+printf 'Tool cache (host -> container): %s -> /root/.cache/syft\n' "${_syft_cache}" >&2
 if [[ ${SUPPLY_CHAIN_VERBOSE:-0} != "1" ]]; then
   printf 'hint: first Syft run may take a while; SUPPLY_CHAIN_VERBOSE=1 for details\n' >&2
 fi
@@ -119,8 +119,8 @@ if [[ ! -s ${sbom_tmp} ]]; then
   exit 1
 fi
 
-printf '\n── Grype (%s) ──\n' "${GRYPE_IMAGE}"
-printf 'Tool cache (host → container): %s → /root/.cache/grype\n' "${_grype_cache}" >&2
+printf '\n-- Grype (%s) --\n' "${GRYPE_IMAGE}"
+printf 'Tool cache (host -> container): %s -> /root/.cache/grype\n' "${_grype_cache}" >&2
 if [[ ${SUPPLY_CHAIN_VERBOSE:-0} != "1" ]]; then
   printf 'hint: Grype may spend several minutes updating its vulnerability DB with little output;\n' >&2
   printf '      SUPPLY_CHAIN_VERBOSE=1 shows progress (subsequent runs reuse %s).\n' "${_grype_cache}" >&2
@@ -135,4 +135,4 @@ printf '\n'
   "${GRYPE_IMAGE}" \
   "${grype_cli[@]}"
 
-printf '\n── Supply chain scan finished ──\n'
+printf '\n-- Supply chain scan finished --\n'

@@ -22,13 +22,13 @@ limitations under the License.
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Main CI](https://github.com/neroduality/pcsc-fido/actions/workflows/main-ci.yml/badge.svg?branch=main)](https://github.com/neroduality/pcsc-fido/actions/workflows/main-ci.yml)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/neroduality/pcsc-fido/badge)](https://securityscorecards.dev/viewer/?uri=github.com/neroduality/pcsc-fido)
-[![Release](https://img.shields.io/github/v/release/neroduality/pcsc-fido)](https://github.com/neroduality/pcsc-fido/releases)
+[![Release](https://img.shields.io/github/v/release/neroduality/pcsc-fido?label=Release&color=939C9E)](https://github.com/neroduality/pcsc-fido/releases)
 [![Documentation](https://img.shields.io/badge/docs-read-blue.svg)](docs/)
 ![Linux only](https://img.shields.io/badge/platform-Linux%20only-blue)
 
 Daemon-side stopgap middleware for Linux: Exposes a virtual FIDO HID device via UHID to relay browser CTAP/U2F requests to NFC security keys over the PC/SC stack.
 
-**Linux only** — this bridge targets Linux browser flows that do not already expose NFC FIDO cards through the platform WebAuthn stack.
+**Linux only** -- this bridge targets Linux browser flows that do not already expose NFC FIDO cards through the platform WebAuthn stack.
 
 ## Quick start
 
@@ -65,7 +65,7 @@ You need: an NFC reader / Smart Card reader (examples below), an **NFC FIDO card
    sudo systemctl enable --now pcsc-fido.service
    ```
 
-   Debian/Ubuntu (local `.deb` from Downloads — use `dpkg`, not `apt install ./…`, if you see `_apt` permission denied):
+   Debian/Ubuntu (local `.deb` from Downloads -- use `dpkg`, not `apt install ./...`, if you see `_apt` permission denied):
 
    ```sh
    sudo dpkg -i ./pcsc-fido_*.deb
@@ -73,9 +73,9 @@ You need: an NFC reader / Smart Card reader (examples below), an **NFC FIDO card
    sudo systemctl enable --now pcsc-fido.service
    ```
 
-3. **Plug in your reader** — for example the [HID Global OMNIKEY 5022](https://www.hidglobal.com/products/omnikey-5022-reader) or [ACS ACR1252U](https://www.acs.com.hk/en/products/342/acr1252u-usb-nfc-reader-iii-nfc-forum-certified-reader/). Run **`pcsc_scan`** (from **`pcsc-tools`**) and confirm the reader appears. Without **`pcsc-tools`**, use **`pcsc-fido --list-readers`** instead.
+3. **Plug in your reader** -- for example the [HID Global OMNIKEY 5022](https://www.hidglobal.com/products/omnikey-5022-reader) or [ACS ACR1252U](https://www.acs.com.hk/en/products/342/acr1252u-usb-nfc-reader-iii-nfc-forum-certified-reader/). Run **`pcsc_scan`** (from **`pcsc-tools`**) and confirm the reader appears. Without **`pcsc-tools`**, use **`pcsc-fido --list-readers`** instead.
 
-4. **Try WebAuthn** — for repeated tests, use a resettable burner NFC token; registrations can consume limited credential slots.
+4. **Try WebAuthn** -- for repeated tests, use a resettable burner NFC token; registrations can consume limited credential slots.
 
    Open [webauthn.io](https://webauthn.io) and start registration or sign-in. The virtual browser key stays hidden until a fresh NFC FIDO card / NFC enabled security key presentation; place and hold the token on the reader to arm the bridge for 60 seconds, then complete the browser prompt. Small relay delays are normal.
 
@@ -86,15 +86,15 @@ You need: an NFC reader / Smart Card reader (examples below), an **NFC FIDO card
 
 Release packages install [INSTALLATION](INSTALLATION.md) and NOTICE under `/usr/share/doc/pcsc-fido/`. Additional docs live in [docs/](docs/):
 
-The docs and source are also written for readers who want to understand how the bridge works—not only how to install it.
+The docs and source are also written for readers who want to understand how the bridge works--not only how to install it.
 
 ## Contributing
 
-Contributions are welcome — see the org-wide [CONTRIBUTING](https://github.com/neroduality/.github/blob/main/CONTRIBUTING.md) guide. We deliberately leverage AI and automation, backed by human review and hardware testing, though the project remains in early development and is not yet production battle-tested.
+Contributions are welcome -- see the org-wide [CONTRIBUTING](https://github.com/neroduality/.github/blob/main/CONTRIBUTING.md) guide. The project is still early; expect rough edges until it has more hardware soak time.
 
 ## Security
 
-`pcsc-fido` serves as a stopgap until the Linux credential stack matures to make this project—and the bridge it provides—entirely obsolete. See [REMEDIATIONS](docs/REMEDIATIONS.md) for the security posture and limits.
+`pcsc-fido` serves as a stopgap until the Linux credential stack matures to make this project--and the bridge it provides--entirely obsolete. See [REMEDIATIONS](docs/REMEDIATIONS.md) for the security posture and limits.
 
 Report vulnerabilities via the org [SECURITY](https://github.com/neroduality/.github/blob/main/SECURITY.md) policy.
 
@@ -103,5 +103,3 @@ Report vulnerabilities via the org [SECURITY](https://github.com/neroduality/.gi
 ## License
 
 See [LICENSE](LICENSE).
-
-Last Updated: 2026-05-30

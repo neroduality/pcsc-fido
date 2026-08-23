@@ -23,5 +23,6 @@
 #include <stdint.h>
 
 PCSC_FIDO_NODISCARD bool pcsc_fido_daemon_run_exchange_with_keepalive(
-  int fd, uint32_t cid, uint8_t cmd, const uint8_t *payload, size_t payload_len, uint8_t *response,
-  size_t response_cap, size_t *response_len, char *err, size_t err_cap);
+    int fd, uint32_t cid, uint8_t cmd, const uint8_t* payload,
+    size_t payload_len, uint8_t* response, size_t response_cap,
+    size_t* response_len, char* err, size_t err_cap);

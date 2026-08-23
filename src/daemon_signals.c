@@ -14,10 +14,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#define _POSIX_C_SOURCE 200809L
-
 #include "pcsc_fido/attrs.h"
 #include "pcsc_fido/daemon_signals.h"
+#include "pcsc_fido/pcsc_bridge_limits.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -27,8 +26,10 @@
 #include <stdint.h>
 #include <string.h>
 #include <unistd.h>
+#include "pcsc_fido/mem_util.h"
 
-static_assert(ATOMIC_INT_LOCK_FREE == 2, "signal stop flag requires lock-free atomic int");
+static_assert(ATOMIC_INT_LOCK_FREE == PCSC_FIDO_ATOMIC_LOCK_FREE_INDICATOR,
+              "signal stop flag requires lock-free atomic int");
 
 static atomic_int g_stop;
 static atomic_int g_signal_read_fd = -1;
@@ -56,7 +57,7 @@ static bool set_fd_flags(int fd) {
   return true;
 }
 
-static bool create_signal_pipe(int fds[2]) {
+static bool create_signal_pipe(int fds[PCSC_FIDO_PIPE_FD_COUNT]) {
   if (pipe(fds) != 0) {
     return false;
   }
@@ -70,24 +71,26 @@ static bool create_signal_pipe(int fds[2]) {
   return true;
 }
 
-static void block_term_signals(sigset_t *previous) {
+/* pthread_sigmask, not sigprocmask: POSIX leaves sigprocmask unspecified in
+ * multithreaded processes, and shutdown can run while worker threads exist. */
+static void block_term_signals(sigset_t* previous) {
   sigset_t block;
   sigemptyset(&block);
   sigaddset(&block, SIGINT);
   sigaddset(&block, SIGTERM);
-  (void)sigprocmask(SIG_BLOCK, &block, previous);
+  (void)pthread_sigmask(SIG_BLOCK, &block, previous);
 }
 
 static void on_signal(int signo PCSC_FIDO_MAYBE_UNUSED) {
   const int saved_errno = errno;
-  const int write_fd = atomic_load_explicit(&g_signal_write_fd, memory_order_relaxed);
+  const int write_fd =
+      atomic_load_explicit(&g_signal_write_fd, memory_order_relaxed);
   const uint8_t wake = 1u;
   atomic_store_explicit(&g_stop, 1, memory_order_relaxed);
   if (write_fd >= 0) {
+    /* Best-effort wake; the stop flag is authoritative. */
     ssize_t wrote = write(write_fd, &wake, sizeof(wake));
-    if (wrote < 0) {
-      /* Best-effort wake; the stop flag is authoritative. */
-    }
+    (void)wrote;
   }
   errno = saved_errno;
 }
@@ -95,36 +98,37 @@ static void on_signal(int signo PCSC_FIDO_MAYBE_UNUSED) {
 bool pcsc_fido_daemon_signals_init(void) {
   struct sigaction sa;
   sigset_t previous;
-  int fds[2] = {-1, -1};
+  int fds[PCSC_FIDO_PIPE_FD_COUNT] = {-1, -1};
 
   if (atomic_load_explicit(&g_signals_installed, memory_order_acquire)) {
     return true;
   }
   block_term_signals(&previous);
   if (!create_signal_pipe(fds)) {
-    (void)sigprocmask(SIG_SETMASK, &previous, nullptr);
+    (void)pthread_sigmask(SIG_SETMASK, &previous, PCSC_FIDO_NULL);
     return false;
   }
-  memset(&sa, 0, sizeof(sa));
+  pcsc_fido_zero_bytes(&sa, sizeof(sa));
   sa.sa_handler = on_signal;
   sigemptyset(&sa.sa_mask);
   sa.sa_flags = 0;
   pcsc_fido_daemon_reset_stop_request();
   atomic_store_explicit(&g_signal_read_fd, fds[0], memory_order_release);
   atomic_store_explicit(&g_signal_write_fd, fds[1], memory_order_release);
-  if (sigaction(SIGINT, &sa, nullptr) != 0 || sigaction(SIGTERM, &sa, nullptr) != 0) {
+  if (sigaction(SIGINT, &sa, PCSC_FIDO_NULL) != 0 ||
+      sigaction(SIGTERM, &sa, PCSC_FIDO_NULL) != 0) {
     sa.sa_handler = SIG_DFL;
-    (void)sigaction(SIGINT, &sa, nullptr);
-    (void)sigaction(SIGTERM, &sa, nullptr);
+    (void)sigaction(SIGINT, &sa, PCSC_FIDO_NULL);
+    (void)sigaction(SIGTERM, &sa, PCSC_FIDO_NULL);
     atomic_store_explicit(&g_signal_read_fd, -1, memory_order_release);
     atomic_store_explicit(&g_signal_write_fd, -1, memory_order_release);
     close_fd_if_open(fds[0]);
     close_fd_if_open(fds[1]);
-    (void)sigprocmask(SIG_SETMASK, &previous, nullptr);
+    (void)pthread_sigmask(SIG_SETMASK, &previous, PCSC_FIDO_NULL);
     return false;
   }
   atomic_store_explicit(&g_signals_installed, true, memory_order_release);
-  (void)sigprocmask(SIG_SETMASK, &previous, nullptr);
+  (void)pthread_sigmask(SIG_SETMASK, &previous, PCSC_FIDO_NULL);
   return true;
 }
 
@@ -138,18 +142,20 @@ void pcsc_fido_daemon_signals_shutdown(void) {
     return;
   }
   block_term_signals(&previous);
-  memset(&sa, 0, sizeof(sa));
+  pcsc_fido_zero_bytes(&sa, sizeof(sa));
   sa.sa_handler = SIG_DFL;
   sigemptyset(&sa.sa_mask);
   sa.sa_flags = 0;
-  (void)sigaction(SIGINT, &sa, nullptr);
-  (void)sigaction(SIGTERM, &sa, nullptr);
-  read_fd = atomic_exchange_explicit(&g_signal_read_fd, -1, memory_order_acq_rel);
-  write_fd = atomic_exchange_explicit(&g_signal_write_fd, -1, memory_order_acq_rel);
+  (void)sigaction(SIGINT, &sa, PCSC_FIDO_NULL);
+  (void)sigaction(SIGTERM, &sa, PCSC_FIDO_NULL);
+  read_fd =
+      atomic_exchange_explicit(&g_signal_read_fd, -1, memory_order_acq_rel);
+  write_fd =
+      atomic_exchange_explicit(&g_signal_write_fd, -1, memory_order_acq_rel);
   atomic_store_explicit(&g_signals_installed, false, memory_order_release);
   close_fd_if_open(read_fd);
   close_fd_if_open(write_fd);
-  (void)sigprocmask(SIG_SETMASK, &previous, nullptr);
+  (void)pthread_sigmask(SIG_SETMASK, &previous, PCSC_FIDO_NULL);
 }
 
 int pcsc_fido_daemon_signal_poll_fd(void) {
@@ -160,7 +166,7 @@ int pcsc_fido_daemon_signal_poll_fd(void) {
 }
 
 void pcsc_fido_daemon_drain_signal_wake(void) {
-  uint8_t buf[64];
+  uint8_t buf[PCSC_FIDO_SIGNAL_DRAIN_BUF_LEN];
   int fd = pcsc_fido_daemon_signal_poll_fd();
   if (fd < 0) {
     return;
@@ -186,7 +192,5 @@ void pcsc_fido_daemon_reset_stop_request(void) {
 }
 
 #if defined(PCSC_FIDO_TESTING)
-void pcsc_fido_daemon_test_request_stop(void) {
-  on_signal(SIGTERM);
-}
+void pcsc_fido_daemon_test_request_stop(void) { on_signal(SIGTERM); }
 #endif
