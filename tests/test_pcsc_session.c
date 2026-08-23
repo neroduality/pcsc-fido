@@ -14,44 +14,54 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "test_caps.h"
+
 #include "pcsc_fido/pcsc_session.h"
 
 #include "mock_pcsc.h"
 
 #include <stdio.h>
 #include <string.h>
+#include "pcsc_fido/pcsc_log.h"
 
 static int failures;
 
-static void expect_true(int condition, const char *message) {
+static void expect_true(int condition, const char* message) {
   if (!condition) {
-    fprintf(stderr, "FAIL: %s\n", message);
+    pcsc_fido_log(PCSC_FIDO_LOG_ERROR, "FAIL: %s", message);
     failures++;
   }
 }
 
 static void generation_invalidated_by_reset(void) {
   pcsc_fido_session_tx_t tx;
-  char err[128];
+  char err[TEST_CAP_128];
   mock_pcsc_reset();
   mock_pcsc_set_readers("Reader PICC 00 00");
   mock_pcsc_set_card_present_immediately(true);
-  expect_true(pcsc_fido_session_ensure(nullptr, err, sizeof(err)), "session ensure");
-  expect_true(pcsc_fido_session_snapshot_tx(&tx, err, sizeof(err)), "snapshot tx");
-  expect_true(pcsc_fido_session_tx_is_current(&tx), "snapshot current before reset");
+  expect_true(pcsc_fido_session_ensure(PCSC_FIDO_NULL, err, sizeof(err)),
+              "session ensure");
+  expect_true(pcsc_fido_session_snapshot_tx(&tx, err, sizeof(err)),
+              "snapshot tx");
+  expect_true(pcsc_fido_session_tx_is_current(&tx),
+              "snapshot current before reset");
   pcsc_fido_session_reset();
-  expect_true(!pcsc_fido_session_tx_is_current(&tx), "snapshot stale after reset");
+  expect_true(!pcsc_fido_session_tx_is_current(&tx),
+              "snapshot stale after reset");
 }
 
 static void verify_ready_tracks_card_presence(void) {
-  char err[128];
+  char err[TEST_CAP_128];
   mock_pcsc_reset();
   mock_pcsc_set_readers("Reader PICC 00 00");
   mock_pcsc_set_card_present_immediately(true);
-  expect_true(pcsc_fido_session_ensure(nullptr, err, sizeof(err)), "establish session");
-  expect_true(pcsc_fido_session_verify_ready(err, sizeof(err)), "verify ready while present");
+  expect_true(pcsc_fido_session_ensure(PCSC_FIDO_NULL, err, sizeof(err)),
+              "establish session");
+  expect_true(pcsc_fido_session_verify_ready(err, sizeof(err)),
+              "verify ready while present");
   mock_pcsc_set_card_present_immediately(false);
-  expect_true(!pcsc_fido_session_verify_ready(err, sizeof(err)), "verify fails when card empty");
+  expect_true(!pcsc_fido_session_verify_ready(err, sizeof(err)),
+              "verify fails when card empty");
   pcsc_fido_session_reset();
 }
 

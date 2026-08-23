@@ -15,9 +15,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Typo detection via codespell — no hunspell / project wordlist maintenance.
+# Typo detection via codespell -- no hunspell / project wordlist maintenance.
 #
-# codespell flags common misspellings (teh, recieve, …), not unknown vocabulary.
+# codespell flags common misspellings (teh, recieve, ...), not unknown vocabulary.
 # Markdown code fences and HTML license comments are stripped; URLs and hex literals
 # are ignored so technical docs stay low-noise without a custom dictionary.
 #
@@ -25,7 +25,7 @@
 # older (Ubuntu 24.04 ships 2.2.x); install-linux-deps.sh upgrades via pip when needed.
 #
 # Usage:
-#   bash .github/linters/helper-codespell.sh [paths…]
+#   bash .github/linters/helper-codespell.sh [paths...]
 #   bash .github/linters/helper-codespell.sh --check-config
 #
 # Sourceable helpers (install-linux-deps.sh):
@@ -86,7 +86,7 @@ pcsc_fido_codespell_main() {
 
   usage() {
     cat <<'EOF'
-Usage: .github/linters/helper-codespell.sh [OPTIONS] [PATH …]
+Usage: .github/linters/helper-codespell.sh [OPTIONS] [PATH ...]
 
 Run codespell with repository-standard filters. Paths default to tracked Markdown
 under the repo root when none are given.
@@ -101,7 +101,7 @@ EOF
   linter_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
   repo_root="$(cd -- "$linter_dir/../.." && pwd)"
 
-  # License HTML blocks and fenced code (inline `code` stays checked — usually prose).
+  # License HTML blocks and fenced code (inline `code` stays checked -- usually prose).
   # shellcheck disable=SC2016
   local IGNORE_MULTILINE_REGEX='(?s)<!--.*?-->|\`\`\`.*?(\`\`\`|$)'
 

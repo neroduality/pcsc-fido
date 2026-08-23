@@ -14,8 +14,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#define _POSIX_C_SOURCE 200809L
-
 #include "mock_pcsc.h"
 
 #include "pcsc_fido/card_monitor.h"
@@ -26,11 +24,14 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <time.h>
+#include "pcsc_fido/pcsc_log.h"
+
+enum {
+  WAIT_TIMEOUT_SEC = 5,
+};
 
 // rem matches nanosleep(2); LD --wrap requires a non-const second parameter.
-int __wrap_nanosleep(const struct timespec *req,
-                     // cppcheck-suppress constParameterPointer
-                     struct timespec *rem) {
+int __wrap_nanosleep(const struct timespec* req, struct timespec* rem) {
   (void)req;
   (void)rem;
   return 0;
@@ -41,23 +42,23 @@ static int failures;
 typedef struct {
   pthread_mutex_t mutex;
   pthread_cond_t cond;
-  pcsc_fido_card_monitor_t *monitor;
+  pcsc_fido_card_monitor_t* monitor;
   unsigned count;
 } wake_state_t;
 
-static void expect_true(int condition, const char *message) {
+static void expect_true(int condition, const char* message) {
   if (!condition) {
-    fprintf(stderr, "FAIL: %s\n", message);
+    pcsc_fido_log(PCSC_FIDO_LOG_ERROR, "FAIL: %s", message);
     failures++;
   }
 }
 
-static void wake_count(void *ctx) {
-  wake_state_t *state = (wake_state_t *)ctx;
-  if (state != nullptr) {
+static void wake_count(void* ctx) {
+  wake_state_t* state = (wake_state_t*)ctx;
+  if (state != PCSC_FIDO_NULL) {
     pthread_mutex_lock(&state->mutex);
     state->count++;
-    if (state->monitor != nullptr) {
+    if (state->monitor != PCSC_FIDO_NULL) {
       atomic_store_explicit(&state->monitor->stop, true, memory_order_relaxed);
     }
     pthread_cond_signal(&state->cond);
@@ -65,19 +66,20 @@ static void wake_count(void *ctx) {
   }
 }
 
-static unsigned wait_for_wake(wake_state_t *state) {
+static unsigned wait_for_wake(wake_state_t* state) {
   struct timespec deadline;
   unsigned count;
-  if (state == nullptr) {
+  if (state == PCSC_FIDO_NULL) {
     return 0u;
   }
   if (clock_gettime(CLOCK_REALTIME, &deadline) != 0) {
     return 0u;
   }
-  deadline.tv_sec += 5;
+  deadline.tv_sec += WAIT_TIMEOUT_SEC;
   pthread_mutex_lock(&state->mutex);
   while (state->count == 0u) {
-    if (pthread_cond_timedwait(&state->cond, &state->mutex, &deadline) == ETIMEDOUT) {
+    if (pthread_cond_timedwait(&state->cond, &state->mutex, &deadline) ==
+        ETIMEDOUT) {
       break;
     }
   }
@@ -87,13 +89,17 @@ static unsigned wait_for_wake(wake_state_t *state) {
 }
 
 static void absent_to_present_wakes(void) {
-  static const bool sequence[] = {false, true, true};
+  static const bool PRESENT_EDGE_SEQUENCE[] = {false, true, true};
   pcsc_fido_card_monitor_t monitor;
-  wake_state_t wakeups = {PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, &monitor, 0u};
+  wake_state_t wakeups = {PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER,
+                          &monitor, 0u};
   mock_pcsc_reset();
   mock_pcsc_set_readers("Monitor Test Reader 00 00");
-  mock_pcsc_set_status_present_sequence(sequence, sizeof(sequence) / sizeof(sequence[0]));
-  expect_true(pcsc_fido_card_monitor_start(&monitor, wake_count, &wakeups), "monitor starts");
+  mock_pcsc_set_status_present_sequence(
+      PRESENT_EDGE_SEQUENCE,
+      sizeof(PRESENT_EDGE_SEQUENCE) / sizeof(PRESENT_EDGE_SEQUENCE[0]));
+  expect_true(pcsc_fido_card_monitor_start(&monitor, wake_count, &wakeups),
+              "monitor starts");
   unsigned count = wait_for_wake(&wakeups);
   pcsc_fido_card_monitor_stop(&monitor);
   expect_true(count > 0u, "absent-to-present edge wakes daemon");
@@ -102,26 +108,33 @@ static void absent_to_present_wakes(void) {
 }
 
 static void initially_present_requires_fresh_edge(void) {
-  static const bool sequence[] = {true, true, false, true};
+  static const bool FRESH_EDGE_SEQUENCE[] = {true, true, false, true};
   pcsc_fido_card_monitor_t monitor;
-  wake_state_t wakeups = {PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, &monitor, 0u};
+  wake_state_t wakeups = {PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER,
+                          &monitor, 0u};
   mock_pcsc_reset();
   mock_pcsc_set_readers("Monitor Test Reader 00 00");
-  mock_pcsc_set_status_present_sequence(sequence, sizeof(sequence) / sizeof(sequence[0]));
-  expect_true(pcsc_fido_card_monitor_start(&monitor, wake_count, &wakeups), "monitor starts");
+  mock_pcsc_set_status_present_sequence(
+      FRESH_EDGE_SEQUENCE,
+      sizeof(FRESH_EDGE_SEQUENCE) / sizeof(FRESH_EDGE_SEQUENCE[0]));
+  expect_true(pcsc_fido_card_monitor_start(&monitor, wake_count, &wakeups),
+              "monitor starts");
   unsigned count = wait_for_wake(&wakeups);
   pcsc_fido_card_monitor_stop(&monitor);
-  expect_true(count > 0u, "initially present card requires absent-to-present edge");
+  expect_true(count > 0u,
+              "initially present card requires absent-to-present edge");
   pthread_cond_destroy(&wakeups.cond);
   pthread_mutex_destroy(&wakeups.mutex);
 }
 
 static void monitor_survives_establish_failure(void) {
   pcsc_fido_card_monitor_t monitor;
-  wake_state_t wakeups = {PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, &monitor, 0u};
+  wake_state_t wakeups = {PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER,
+                          &monitor, 0u};
   mock_pcsc_reset();
   mock_pcsc_set_establish_fail(1);
-  expect_true(pcsc_fido_card_monitor_start(&monitor, wake_count, &wakeups), "monitor starts");
+  expect_true(pcsc_fido_card_monitor_start(&monitor, wake_count, &wakeups),
+              "monitor starts");
   pcsc_fido_card_monitor_stop(&monitor);
   expect_true(wakeups.count == 0u, "establish failure does not wake");
   pthread_cond_destroy(&wakeups.cond);

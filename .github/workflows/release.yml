@@ -14,8 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Tag-driven release: build DEB/RPM packages and publish to GitHub Releases.
-# Maintainer guide: RELEASE.md
+# Tag-driven release: run Main CI for this SHA, then build DEB/RPM packages and
+# publish to GitHub Releases. Maintainer guide: RELEASE.md
 name: Release
 
 on:
@@ -35,28 +35,18 @@ defaults:
     shell: bash
 
 jobs:
-  build-test-lint:
-    name: Build, test, lint
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
-
-      - name: Install dependencies
-        env:
-          AUTO_INSTALL_LINUX_DEPS: 1
-          PCSC_FIDO_ALLOW_SUDO_DEPS: 1
-        run: bash .github/scripts/install-linux-deps.sh
-
-      - name: Lint (strict tools)
-        run: bash .github/linters/ci-lint.sh --strict-tools
+  main-ci:
+    name: Main CI
+    uses: ./.github/workflows/main-ci.yml
+    permissions:
+      contents: read
 
   package-deb-native:
     name: Package DEB (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
-    needs: [build-test-lint]
+    container:
+      image: debian:sid-slim@sha256:54f7a23f03be1e9fe2849c61a7455588ea29b84c1659440f8ece2aea4c9871af
+    needs: [main-ci]
     strategy:
       fail-fast: false
       matrix:
@@ -66,14 +56,19 @@ jobs:
           - runner: ubuntu-24.04-arm
             arch: arm64
     steps:
+      - name: Install checkout prerequisites
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y --no-install-recommends ca-certificates git tar
+
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
       - name: Build DEB
         env:
-          AUTO_INSTALL_LINUX_DEPS: 1
-          PCSC_FIDO_ALLOW_SUDO_DEPS: 1
+          AUTO_INSTALL_LINUX_DEPS: "1"
         run: bash .github/scripts/release-build-package.sh --format deb --arch "${{ matrix.arch }}"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -86,7 +81,7 @@ jobs:
     runs-on: ubuntu-24.04
     container:
       image: debian:trixie@sha256:4ae67669760b807c19f23902a3fd7c121a6a70cf2ae709035674b23e712e4d62
-    needs: [build-test-lint]
+    needs: [main-ci]
     strategy:
       fail-fast: false
       matrix:
@@ -98,8 +93,8 @@ jobs:
 
       - name: Build DEB
         env:
-          AUTO_INSTALL_LINUX_DEPS: 1
-          PCSC_FIDO_ALLOW_SUDO_DEPS: 1
+          AUTO_INSTALL_LINUX_DEPS: "1"
+          PCSC_FIDO_ALLOW_SUDO_DEPS: "1"
         run: bash .github/scripts/release-build-package.sh --format deb --arch "${{ matrix.arch }}" --cross
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -110,7 +105,9 @@ jobs:
   package-rpm-native:
     name: Package RPM (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
-    needs: [build-test-lint]
+    container:
+      image: fedora:43@sha256:762d73ba1c455232b0272c5d445a34f36c4b9f421cbc05ce8102552325b6a222
+    needs: [main-ci]
     strategy:
       fail-fast: false
       matrix:
@@ -120,14 +117,18 @@ jobs:
           - runner: ubuntu-24.04-arm
             arch: arm64
     steps:
+      - name: Install checkout prerequisites
+        run: |
+          dnf install -y --setopt=install_weak_deps=False ca-certificates git tar
+          dnf clean all
+
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
       - name: Build RPM
         env:
-          AUTO_INSTALL_LINUX_DEPS: 1
-          PCSC_FIDO_ALLOW_SUDO_DEPS: 1
+          AUTO_INSTALL_LINUX_DEPS: "1"
         run: bash .github/scripts/release-build-package.sh --format rpm --arch "${{ matrix.arch }}"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -140,7 +141,7 @@ jobs:
     runs-on: ubuntu-24.04
     container:
       image: debian:trixie@sha256:4ae67669760b807c19f23902a3fd7c121a6a70cf2ae709035674b23e712e4d62
-    needs: [build-test-lint]
+    needs: [main-ci]
     strategy:
       fail-fast: false
       matrix:
@@ -152,8 +153,8 @@ jobs:
 
       - name: Build RPM
         env:
-          AUTO_INSTALL_LINUX_DEPS: 1
-          PCSC_FIDO_ALLOW_SUDO_DEPS: 1
+          AUTO_INSTALL_LINUX_DEPS: "1"
+          PCSC_FIDO_ALLOW_SUDO_DEPS: "1"
         run: bash .github/scripts/release-build-package.sh --format rpm --arch "${{ matrix.arch }}" --cross
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

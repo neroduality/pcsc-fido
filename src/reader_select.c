@@ -25,43 +25,51 @@
 #include <stdlib.h>
 #include <string.h>
 
+enum {
+  PCSC_FIDO_READER_NEEDLE_SAM_LEN = 3u,
+  PCSC_FIDO_READER_NEEDLE_PICC_LEN = 4u,
+  PCSC_FIDO_READER_NEEDLE_NFC_LEN = 3u,
+  PCSC_FIDO_READER_NEEDLE_CONTACTLESS_LEN = 11u,
+};
+
 bool pcsc_fido_reader_status_has_card(uint32_t event_state) {
   return (event_state & (uint32_t)SCARD_STATE_PRESENT) != 0u &&
          (event_state & (uint32_t)SCARD_STATE_MUTE) == 0u &&
          (event_state & (uint32_t)SCARD_STATE_INUSE) == 0u;
 }
 
-bool pcsc_fido_reader_state_has_card(const pcsc_fido_reader_state_t *state) {
-  const SCARD_READERSTATE *reader_state = (const SCARD_READERSTATE *)state;
-  return reader_state != nullptr &&
+bool pcsc_fido_reader_state_has_card(const pcsc_fido_reader_state_t* state) {
+  const SCARD_READERSTATE* reader_state = (const SCARD_READERSTATE*)state;
+  return reader_state != PCSC_FIDO_NULL &&
          pcsc_fido_reader_status_has_card((uint32_t)reader_state->dwEventState);
 }
 
-const char *pcsc_fido_reader_env_needle(const char *needle) {
-  const char *env;
-  if (needle != nullptr && needle[0] != '\0') {
+const char* pcsc_fido_reader_env_needle(const char* needle) {
+  const char* env;
+  if (needle != PCSC_FIDO_NULL && needle[0] != '\0') {
     return needle;
   }
   env = getenv("PCSC_FIDO_READER");
-  if (env != nullptr && env[0] != '\0') {
+  if (env != PCSC_FIDO_NULL && env[0] != '\0') {
     return env;
   }
   return needle;
 }
 
-pcsc_fido_reader_list_entry_result_t pcsc_fido_reader_list_next(const char *readers,
-                                                                size_t readers_len, size_t *offset,
-                                                                const char **entry,
-                                                                size_t *entry_len) {
+pcsc_fido_reader_list_entry_result_t pcsc_fido_reader_list_next(
+    const char* readers, size_t readers_len, size_t* offset, const char** entry,
+    size_t* entry_len) {
   size_t name_len;
-  if (readers == nullptr || offset == nullptr || entry == nullptr || entry_len == nullptr ||
+  if (readers == PCSC_FIDO_NULL || offset == PCSC_FIDO_NULL ||
+      entry == PCSC_FIDO_NULL || entry_len == PCSC_FIDO_NULL ||
       readers_len == 0u || *offset >= readers_len) {
     return PCSC_FIDO_READER_LIST_ENTRY_MALFORMED;
   }
   if (readers[*offset] == '\0') {
     return PCSC_FIDO_READER_LIST_ENTRY_END;
   }
-  if (!pcsc_fido_bounded_strlen(readers + *offset, readers_len - *offset, &name_len)) {
+  if (!pcsc_fido_bounded_strlen(readers + *offset, readers_len - *offset,
+                                &name_len)) {
     return PCSC_FIDO_READER_LIST_ENTRY_MALFORMED;
   }
   *entry = readers + *offset;
@@ -70,19 +78,20 @@ pcsc_fido_reader_list_entry_result_t pcsc_fido_reader_list_next(const char *read
   return PCSC_FIDO_READER_LIST_ENTRY_OK;
 }
 
-bool pcsc_fido_reader_list_is_valid(const char *readers, size_t readers_len) {
+bool pcsc_fido_reader_list_is_valid(const char* readers, size_t readers_len) {
   size_t off = 0u;
-  if (readers == nullptr || readers_len == 0u) {
+  if (readers == PCSC_FIDO_NULL || readers_len == 0u) {
     return false;
   }
   while (off < readers_len) {
     pcsc_fido_reader_list_entry_result_t entry_result;
-    const char *entry;
+    const char* entry;
     size_t entry_len;
     if (readers[off] == '\0') {
       return true;
     }
-    entry_result = pcsc_fido_reader_list_next(readers, readers_len, &off, &entry, &entry_len);
+    entry_result = pcsc_fido_reader_list_next(readers, readers_len, &off,
+                                              &entry, &entry_len);
     if (entry_result == PCSC_FIDO_READER_LIST_ENTRY_END) {
       return true;
     }
@@ -95,9 +104,11 @@ bool pcsc_fido_reader_list_is_valid(const char *readers, size_t readers_len) {
   return false;
 }
 
-bool pcsc_fido_reader_name_contains_ci_len(const char *reader, size_t reader_len,
-                                           const char *needle, size_t needle_len) {
-  if (reader == nullptr || needle == nullptr) {
+bool pcsc_fido_reader_name_contains_ci_len(const char* reader,
+                                           size_t reader_len,
+                                           const char* needle,
+                                           size_t needle_len) {
+  if (reader == PCSC_FIDO_NULL || needle == PCSC_FIDO_NULL) {
     return false;
   }
   if (needle_len == 0u) {
@@ -108,8 +119,8 @@ bool pcsc_fido_reader_name_contains_ci_len(const char *reader, size_t reader_len
   }
   for (size_t pos = 0u; pos + needle_len <= reader_len; pos++) {
     size_t i = 0u;
-    while (i < needle_len &&
-           tolower((unsigned char)reader[pos + i]) == tolower((unsigned char)needle[i])) {
+    while (i < needle_len && tolower((unsigned char)reader[pos + i]) ==
+                                 tolower((unsigned char)needle[i])) {
       i++;
     }
     if (i == needle_len) {
@@ -119,86 +130,101 @@ bool pcsc_fido_reader_name_contains_ci_len(const char *reader, size_t reader_len
   return false;
 }
 
-bool pcsc_fido_reader_name_contains_ci(const char *reader, const char *needle) {
+bool pcsc_fido_reader_name_contains_ci(const char* reader, const char* needle) {
   size_t reader_len;
   size_t needle_len;
-  if (!pcsc_fido_bounded_strlen(reader, PCSC_FIDO_READER_NAME_MAX, &reader_len) ||
-      !pcsc_fido_bounded_strlen(needle, PCSC_FIDO_READER_NAME_MAX, &needle_len)) {
+  if (!pcsc_fido_bounded_strlen(reader, PCSC_FIDO_READER_NAME_MAX,
+                                &reader_len) ||
+      !pcsc_fido_bounded_strlen(needle, PCSC_FIDO_READER_NAME_MAX,
+                                &needle_len)) {
     return false;
   }
-  return pcsc_fido_reader_name_contains_ci_len(reader, reader_len, needle, needle_len);
+  return pcsc_fido_reader_name_contains_ci_len(reader, reader_len, needle,
+                                               needle_len);
 }
 
-bool pcsc_fido_reader_name_is_sam_slot_len(const char *reader, size_t reader_len) {
-  return pcsc_fido_reader_name_contains_ci_len(reader, reader_len, "sam", 3u);
+bool pcsc_fido_reader_name_is_sam_slot_len(const char* reader,
+                                           size_t reader_len) {
+  return pcsc_fido_reader_name_contains_ci_len(reader, reader_len, "sam",
+                                               PCSC_FIDO_READER_NEEDLE_SAM_LEN);
 }
 
-bool pcsc_fido_reader_name_is_contactless_slot_len(const char *reader, size_t reader_len) {
-  if (reader == nullptr || pcsc_fido_reader_name_is_sam_slot_len(reader, reader_len)) {
+bool pcsc_fido_reader_name_is_contactless_slot_len(const char* reader,
+                                                   size_t reader_len) {
+  if (reader == PCSC_FIDO_NULL ||
+      pcsc_fido_reader_name_is_sam_slot_len(reader, reader_len)) {
     return false;
   }
-  return pcsc_fido_reader_name_contains_ci_len(reader, reader_len, "picc", 4u) ||
-         pcsc_fido_reader_name_contains_ci_len(reader, reader_len, "nfc", 3u) ||
-         pcsc_fido_reader_name_contains_ci_len(reader, reader_len, "contactless", 11u);
+  return pcsc_fido_reader_name_contains_ci_len(
+             reader, reader_len, "picc", PCSC_FIDO_READER_NEEDLE_PICC_LEN) ||
+         pcsc_fido_reader_name_contains_ci_len(
+             reader, reader_len, "nfc", PCSC_FIDO_READER_NEEDLE_NFC_LEN) ||
+         pcsc_fido_reader_name_contains_ci_len(
+             reader, reader_len, "contactless",
+             PCSC_FIDO_READER_NEEDLE_CONTACTLESS_LEN);
 }
 
-bool pcsc_fido_reader_name_is_contactless_slot(const char *reader) {
+bool pcsc_fido_reader_name_is_contactless_slot(const char* reader) {
   size_t reader_len;
-  if (!pcsc_fido_bounded_strlen(reader, PCSC_FIDO_READER_NAME_MAX, &reader_len)) {
+  if (!pcsc_fido_bounded_strlen(reader, PCSC_FIDO_READER_NAME_MAX,
+                                &reader_len)) {
     return false;
   }
   return pcsc_fido_reader_name_is_contactless_slot_len(reader, reader_len);
 }
 
-static bool copy_reader_name(char *dst, size_t dst_cap, const char *src, size_t src_len) {
-  if (dst == nullptr || dst_cap == 0u) {
+static bool copy_reader_name(char* dst, size_t dst_cap, const char* src,
+                             size_t src_len) {
+  if (dst == PCSC_FIDO_NULL || dst_cap == 0u) {
     return false;
   }
-  if (src == nullptr) {
+  if (src == PCSC_FIDO_NULL) {
     dst[0] = '\0';
     return true;
   }
   return pcsc_fido_copy_cstr_len(dst, dst_cap, src, src_len);
 }
 
-pcsc_fido_reader_pick_result_t
-pcsc_fido_pick_reader_from_list(const char *readers, size_t readers_len, const char *needle,
-                                bool auto_select_contactless, char *reader, size_t reader_cap,
-                                bool *auto_selected_contactless) {
+pcsc_fido_reader_pick_result_t pcsc_fido_pick_reader_from_list(
+    const char* readers, size_t readers_len, const char* needle,
+    bool auto_select_contactless, char* reader, size_t reader_cap,
+    bool* auto_selected_contactless) {
   size_t matches = 0u;
   size_t contactless_matches = 0u;
   size_t non_sam_matches = 0u;
   char contactless_reader[PCSC_FIDO_READER_NAME_MAX];
   size_t contactless_reader_len = 0u;
-  bool has_needle = needle != nullptr && needle[0] != '\0';
+  bool has_needle = needle != PCSC_FIDO_NULL && needle[0] != '\0';
   size_t needle_len = 0u;
 
-  if (auto_selected_contactless != nullptr) {
+  if (auto_selected_contactless != PCSC_FIDO_NULL) {
     *auto_selected_contactless = false;
   }
-  if (reader != nullptr && reader_cap > 0u) {
+  if (reader != PCSC_FIDO_NULL && reader_cap > 0u) {
     reader[0] = '\0';
   }
-  if (readers == nullptr || readers_len == 0u || readers[0] == '\0') {
+  if (readers == PCSC_FIDO_NULL || readers_len == 0u || readers[0] == '\0') {
     return PCSC_FIDO_READER_PICK_NO_MATCH;
   }
-  if (has_needle && !pcsc_fido_bounded_strlen(needle, PCSC_FIDO_READER_NAME_MAX, &needle_len)) {
+  if (has_needle && !pcsc_fido_bounded_strlen(needle, PCSC_FIDO_READER_NAME_MAX,
+                                              &needle_len)) {
     return PCSC_FIDO_READER_PICK_NO_MATCH;
   }
 
   contactless_reader[0] = '\0';
   for (size_t off = 0u;;) {
-    const char *p;
+    const char* p;
     size_t p_len;
     pcsc_fido_reader_list_entry_result_t entry_result =
-      pcsc_fido_reader_list_next(readers, readers_len, &off, &p, &p_len);
+        pcsc_fido_reader_list_next(readers, readers_len, &off, &p, &p_len);
     if (entry_result == PCSC_FIDO_READER_LIST_ENTRY_END) {
       break;
     }
     if (entry_result == PCSC_FIDO_READER_LIST_ENTRY_MALFORMED) {
       return PCSC_FIDO_READER_PICK_NO_MATCH;
     }
-    if (has_needle && !pcsc_fido_reader_name_contains_ci_len(p, p_len, needle, needle_len)) {
+    if (has_needle &&
+        !pcsc_fido_reader_name_contains_ci_len(p, p_len, needle, needle_len)) {
       continue;
     }
     if (matches == 0u) {
@@ -213,7 +239,8 @@ pcsc_fido_pick_reader_from_list(const char *readers, size_t readers_len, const c
     if (!has_needle && auto_select_contactless &&
         pcsc_fido_reader_name_is_contactless_slot_len(p, p_len)) {
       if (contactless_matches == 0u) {
-        if (!copy_reader_name(contactless_reader, sizeof(contactless_reader), p, p_len)) {
+        if (!copy_reader_name(contactless_reader, sizeof(contactless_reader), p,
+                              p_len)) {
           return PCSC_FIDO_READER_PICK_NAME_TOO_LONG;
         }
         contactless_reader_len = p_len;
@@ -227,13 +254,15 @@ pcsc_fido_pick_reader_from_list(const char *readers, size_t readers_len, const c
   }
   if (!has_needle && auto_select_contactless && contactless_matches == 1u &&
       non_sam_matches == 1u) {
-    if (!copy_reader_name(reader, reader_cap, contactless_reader, contactless_reader_len)) {
+    if (!copy_reader_name(reader, reader_cap, contactless_reader,
+                          contactless_reader_len)) {
       return PCSC_FIDO_READER_PICK_NAME_TOO_LONG;
     }
-    if (auto_selected_contactless != nullptr) {
+    if (auto_selected_contactless != PCSC_FIDO_NULL) {
       *auto_selected_contactless = true;
     }
     return PCSC_FIDO_READER_PICK_OK;
   }
-  return matches == 0u ? PCSC_FIDO_READER_PICK_NO_MATCH : PCSC_FIDO_READER_PICK_AMBIGUOUS;
+  return matches == 0u ? PCSC_FIDO_READER_PICK_NO_MATCH
+                       : PCSC_FIDO_READER_PICK_AMBIGUOUS;
 }

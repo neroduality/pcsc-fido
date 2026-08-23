@@ -144,7 +144,7 @@ if ! command -v "${ENGINE}" >/dev/null 2>&1; then
   exit 1
 fi
 
-# dist/ is append-only across invocations unless cleared here — avoids stale artifacts
+# dist/ is append-only across invocations unless cleared here -- avoids stale artifacts
 # in the summary when running e.g. --release-arch riscv64 after --all-release.
 PCSC_FIDO_RELEASE_BUILT=()
 pcsc_fido_record_release_artifact() {
@@ -173,7 +173,7 @@ run_native_package() {
     exit 2
   fi
 
-  printf '\n── Release packages: native %s %s (debian:trixie-slim) ──\n' "${arch}" "${fmt}"
+  printf '\n-- Release packages: native %s %s (debian:trixie-slim) --\n' "${arch}" "${fmt}"
   dist_before="$(mktemp)"
   find "${REPO_ROOT}/dist" -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' \) -printf '%f\n' 2>/dev/null | sort >"${dist_before}" || true
   # shellcheck disable=SC2016
@@ -210,7 +210,7 @@ run_cross_package() {
     exit 2
   fi
 
-  printf '\n── Release packages: cross %s %s (debian:trixie) ──\n' "${arch}" "${fmt}"
+  printf '\n-- Release packages: cross %s %s (debian:trixie) --\n' "${arch}" "${fmt}"
   dist_before="$(mktemp)"
   find "${REPO_ROOT}/dist" -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' \) -printf '%f\n' 2>/dev/null | sort >"${dist_before}" || true
   # shellcheck disable=SC2016
@@ -322,7 +322,7 @@ esac
 
 chown_outputs 2>/dev/null || true
 
-printf '\n── Release package builds finished ──\n'
+printf '\n-- Release package builds finished --\n'
 printf '  output dir: %s\n' "${REPO_ROOT}/dist"
 if ((${#PCSC_FIDO_RELEASE_BUILT[@]} > 0)); then
   printf '  built this run (%s):\n' "${#PCSC_FIDO_RELEASE_BUILT[@]}"

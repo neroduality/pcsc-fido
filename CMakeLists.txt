@@ -19,7 +19,7 @@ cmake_minimum_required(VERSION 3.20)
 # Release version: bump `project(... VERSION ...)` below before tagging (v* tag
 # without the leading v). CMake generates `include/pcsc_fido/version.h` from
 # that value; it feeds CPACK, packages, and `pcsc-fido --version`. See RELEASE.md.
-project(pcsc_fido VERSION 0.1.0 LANGUAGES C)
+project(pcsc_fido VERSION 0.2.0 LANGUAGES C)
 
 configure_file(
   "${CMAKE_CURRENT_SOURCE_DIR}/include/pcsc_fido/version.h.in"
@@ -40,30 +40,43 @@ if(BUILD_TESTING)
 endif()
 find_package(Threads REQUIRED)
 
-# ISO C23 + HostHardening.cmake (OpenSSF-style hosted Linux hardening).
+# ISO C23 + OpenSSF hardening (org lint kit: cmake/Hardening.cmake, generated).
 set(CMAKE_C_STANDARD 23)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# POSIX.1-2008 surface, defined via the build (not reserved-identifier #defines in .c).
+add_compile_definitions(_POSIX_C_SOURCE=200809L)
+
 include(CheckIPOSupported)
 check_ipo_supported(RESULT _pcsc_fido_ipo_ok OUTPUT _pcsc_fido_ipo_msg)
 
 # Cross toolchains use static-library try-compiles for feature probes, but the PIE probe must
 # prove that the target compiler can link an executable with PIE enabled.
-set(_pcsc_fido_try_compile_target_type_saved "${CMAKE_TRY_COMPILE_TARGET_TYPE}")
+# Restore carefully: assigning an empty string is not the same as unset, and an empty
+# CMAKE_TRY_COMPILE_TARGET_TYPE can break later check_c_compiler_flag try_compiles.
+set(_pcsc_fido_try_compile_target_type_saved "")
+set(_pcsc_fido_try_compile_target_type_was_set FALSE)
+if(DEFINED CMAKE_TRY_COMPILE_TARGET_TYPE)
+  set(_pcsc_fido_try_compile_target_type_saved "${CMAKE_TRY_COMPILE_TARGET_TYPE}")
+  set(_pcsc_fido_try_compile_target_type_was_set TRUE)
+endif()
 if(CMAKE_CROSSCOMPILING AND CMAKE_TRY_COMPILE_TARGET_TYPE STREQUAL "STATIC_LIBRARY")
   set(CMAKE_TRY_COMPILE_TARGET_TYPE EXECUTABLE)
 endif()
 include(CheckPIESupported)
 check_pie_supported(LANGUAGES C OUTPUT_VARIABLE _pcsc_fido_pie_msg)
-set(CMAKE_TRY_COMPILE_TARGET_TYPE "${_pcsc_fido_try_compile_target_type_saved}")
+if(_pcsc_fido_try_compile_target_type_was_set)
+  set(CMAKE_TRY_COMPILE_TARGET_TYPE "${_pcsc_fido_try_compile_target_type_saved}")
+else()
+  unset(CMAKE_TRY_COMPILE_TARGET_TYPE)
+endif()
 if(NOT CMAKE_C_LINK_PIE_SUPPORTED)
   message(FATAL_ERROR "PIE linking is required for pcsc-fido: ${_pcsc_fido_pie_msg}")
 endif()
 
-include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/HostHardening.cmake")
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyCompiler.cmake")
 
 if(PCSC_FIDO_HAVE_MEMSET_EXPLICIT)
@@ -205,6 +218,11 @@ else()
   message(STATUS "IPO/LTO not enabled for pcsc-fido: ${_pcsc_fido_ipo_msg}")
 endif()
 
+# OpenSSF hardening (org lint kit): include after sanitizer/coverage flag setup so the
+# HAVE_INSTRUMENTED_SANITIZER fortify probe is not defeated by later add_compile_options.
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Hardening.cmake")
+define_hardening(TARGET hardening C_STANDARD 23)
+
 add_library(pcsc_fido_core STATIC
   src/apdu.c
   src/apdu_chain.c
@@ -216,9 +234,11 @@ add_library(pcsc_fido_core STATIC
   src/daemon_rate_limit.c
   src/daemon_signals.c
   src/daemon_uhid_loop.c
+  src/mem_util.c
   src/pcsc_bridge.c
   src/pcsc_bridge_debug.c
   src/pcsc_err.c
+  src/pcsc_fido_io.c
   src/pcsc_log.c
   src/pcsc_reader_ops.c
   src/pcsc_session.c
@@ -229,7 +249,7 @@ target_include_directories(pcsc_fido_core PUBLIC
   include
   "${CMAKE_CURRENT_BINARY_DIR}/include"
   PRIVATE ${PCSC_INCLUDE_DIRS})
-target_link_libraries(pcsc_fido_core PUBLIC Threads::Threads pcsc_fido_host_hardening)
+target_link_libraries(pcsc_fido_core PUBLIC Threads::Threads hardening)
 
 add_executable(pcsc-fido
   src/browser_daemon.c
@@ -243,7 +263,18 @@ target_link_libraries(pcsc-fido PRIVATE pcsc_fido_core PkgConfig::PCSC Threads::
 
 if(BUILD_TESTING)
   set(PCSC_FIDO_TESTS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+  include_directories("${PCSC_FIDO_TESTS_DIR}")
   target_compile_definitions(pcsc_fido_core PRIVATE PCSC_FIDO_TESTING)
+
+  # Compile the libFuzzer harness TUs under the standard hardening flags so the
+  # OpenSSF compile-DB audit covers them. The runnable fuzzers are built
+  # separately via PCSC_FIDO_BUILD_FUZZING (make fuzz); here we only need the
+  # translation units in the compile database, so an OBJECT library suffices.
+  add_library(pcsc_fido_fuzz_harness_lint OBJECT
+    tests/fuzz/fuzz_apdu.c
+    tests/fuzz/fuzz_cbor_util.c
+    tests/fuzz/fuzz_request_assembly.c)
+  target_link_libraries(pcsc_fido_fuzz_harness_lint PRIVATE pcsc_fido_core)
 
   add_executable(test_apdu tests/test_apdu.c)
   target_link_libraries(test_apdu PRIVATE pcsc_fido_core)

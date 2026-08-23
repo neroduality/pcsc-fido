@@ -21,7 +21,7 @@ name: OSV-Scanner
 
 on:
   schedule:
-    # Quarterly — 1st of Jan/Apr/Jul/Oct at 14:45 UTC.
+    # Quarterly -- 1st of Jan/Apr/Jul/Oct at 14:45 UTC.
     - cron: "45 14 1 1,4,7,10 *"
   workflow_dispatch:
 

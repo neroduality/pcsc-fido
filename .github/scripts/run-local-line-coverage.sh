@@ -140,10 +140,10 @@ pcsc_fido_run_coverage() {
 
   genhtml --quiet "${info_file}" --output-directory "${coverage_dir}"
 
-  printf '\n── Line coverage summary (src/ focus; tests excluded) ──\n'
+  printf '\n-- Line coverage summary (src/ focus; tests excluded) --\n'
   lcov --summary "${info_file}"
 
-  printf '\n── Line coverage report ──\n'
+  printf '\n-- Line coverage report --\n'
   printf '  HTML: %s/index.html\n' "${coverage_dir}"
   printf '  lcov: %s\n' "${info_file}"
   if [[ ${OPEN_HINT} -eq 1 ]] && command -v xdg-open >/dev/null 2>&1; then

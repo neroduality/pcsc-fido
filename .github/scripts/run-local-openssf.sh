@@ -38,7 +38,7 @@ Usage:
 
 Options:
   --format FMT     json | default | probe | intoto (default: json). SARIF is only used by the
-                   GitHub Action with an online repo — not supported with --local.
+                   GitHub Action with an online repo -- not supported with --local.
   --output PATH    Write scorecard stdout to PATH (--format json is passed through jq when available).
   --show-details   Pass --show-details to scorecard
   --image IMG      Container image (default: gcr.io/openssf/scorecard:stable)
@@ -156,7 +156,7 @@ cleanup_scorecard_tree() {
 }
 trap cleanup_scorecard_tree EXIT
 
-printf '\n── OpenSSF Scorecard (%s) ──\n' "${IMAGE}"
+printf '\n-- OpenSSF Scorecard (%s) --\n' "${IMAGE}"
 printf 'Source: %s (staged; build/ excluded)\n\n' "${REPO_ROOT}"
 
 engine_run() {
@@ -218,4 +218,4 @@ engine_run() {
 
 engine_run
 
-printf '\n── Scorecard finished ──\n'
+printf '\n-- Scorecard finished --\n'

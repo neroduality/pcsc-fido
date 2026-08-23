@@ -17,7 +17,7 @@ limitations under the License.
 
 # pcsc-fido @TAG@
 
-**Linux only** — daemon-side bridge: virtual FIDO HID (UHID) → PC/SC → NFC FIDO card / NFC security key via `pcscd` and a USB CCID reader.
+**Linux only** -- daemon-side bridge: virtual FIDO HID (UHID) -> PC/SC -> NFC FIDO card / NFC security key via `pcscd` and a USB CCID reader.
 
 ## Changelog
 
@@ -36,9 +36,9 @@ Git history contains detailed changes. Includes general improvements and capabil
 
 Packages ship **`INSTALLATION.md`** and **`NOTICE`** under `/usr/share/doc/pcsc-fido/`.
 
-- [INSTALLATION.md](https://github.com/neroduality/pcsc-fido/blob/@TAG@/INSTALLATION.md) — install, upgrade, and uninstall
-- [README.md](https://github.com/neroduality/pcsc-fido/blob/@TAG@/README.md) — overview and contributing
-- [docs/](https://github.com/neroduality/pcsc-fido/tree/@TAG@/docs/) — debugging, security posture, checklist, and more (repo only)
+- [INSTALLATION.md](https://github.com/neroduality/pcsc-fido/blob/@TAG@/INSTALLATION.md) -- install, upgrade, and uninstall
+- [README.md](https://github.com/neroduality/pcsc-fido/blob/@TAG@/README.md) -- overview and contributing
+- [docs/](https://github.com/neroduality/pcsc-fido/tree/@TAG@/docs/) -- debugging, security posture, checklist, and more (repo only)
 
 Verify downloads: `sha256sum -c SHA256SUMS` (see Assets).
 
@@ -48,7 +48,7 @@ Verify downloads: `sha256sum -c SHA256SUMS` (see Assets).
 - **RPM (6):** x86_64, aarch64, armv7hl, ppc64le, riscv64, s390x
 - **Source:** `pcsc-fido-@VERSION@.tar.gz` (git archive at tag)
 - **Integrity:** `SHA256SUMS` (GNU `sha256sum` format)
-- **Tests:** amd64 release lint gate runs `ctest`; native package builds run `ctest` with `BUILD_TESTING=ON`; cross-compiled ports skip unit tests (`SKIP_CTEST=1`)
+- **Tests:** Release runs Main CI (lint + Debug/scan-build matrix) before packaging; native package builds also run `ctest` with `BUILD_TESTING=ON`; cross-compiled ports skip unit tests (`SKIP_CTEST=1`)
 
 ## Notes
 
@@ -57,6 +57,6 @@ Verify downloads: `sha256sum -c SHA256SUMS` (see Assets).
 | Package name | `pcsc-fido` |
 | Binary / service | `pcsc-fido`, `pcsc-fido.service` |
 | Debug logging | Release packages omit `PCSC_FIDO_DEBUG`; build Debug from source if needed |
-| Hardware testing | Manual smoke matrix in [CHECKLIST.md — Hardware/browser smoke matrix](https://github.com/neroduality/pcsc-fido/blob/@TAG@/docs/CHECKLIST.md#hardwarebrowser-smoke-matrix) (not certification) |
+| Hardware testing | Manual smoke matrix in [CHECKLIST.md -- Hardware/browser smoke matrix](https://github.com/neroduality/pcsc-fido/blob/@TAG@/docs/CHECKLIST.md#hardwarebrowser-smoke-matrix) (not certification) |
 | Security reports | [SECURITY.md](https://github.com/neroduality/.github/blob/main/SECURITY.md) |
 | License | Apache-2.0 |

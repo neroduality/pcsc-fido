@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include "pcsc_fido/pcsc_fido_null.h"
+
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L
 #define PCSC_FIDO_NODISCARD [[nodiscard]]
 #define PCSC_FIDO_UNREACHABLE() unreachable()
@@ -50,10 +52,10 @@
  *   - PCSC_FIDO_UNSEQUENCED for stateless, effectless, idempotent, independent
  *     functions whose result depends only on their scalar arguments and that do
  *     not read or write through any pointer (strongest contract).
- *   - PCSC_FIDO_REPRODUCIBLE for side-effect-free functions that may read memory
- *     reachable through their arguments and always return the same value for the
- *     same inputs (pure readers/parsers).
- * Do NOT annotate functions that write through out-pointers or touch globals.
+ *   - PCSC_FIDO_REPRODUCIBLE for side-effect-free functions that may read
+ * memory reachable through their arguments and always return the same value for
+ * the same inputs (pure readers/parsers). Do NOT annotate functions that write
+ * through out-pointers or touch globals.
  */
 #if defined(__has_c_attribute)
 #if __has_c_attribute(unsequenced)

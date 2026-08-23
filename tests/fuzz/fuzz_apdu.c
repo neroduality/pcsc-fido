@@ -20,13 +20,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
-  uint8_t packed[PCSC_FIDO_SELECT_APDU_MAX];
-  size_t packed_len = 0u;
-  uint8_t cbor_out[PCSC_FIDO_BRIDGE_MAX_APDU];
-  size_t cbor_len = 0u;
-
-  if (data == nullptr) {
+int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
+  if (data == PCSC_FIDO_NULL) {
     return 0;
   }
 
@@ -34,8 +29,14 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   (void)parsed;
 
   if (size > 0u) {
-    (void)pcsc_fido_pack_select_fido_apdu(packed, sizeof(packed), &packed_len, (data[0] & 1u) != 0u);
-    (void)pcsc_fido_pack_ctap2_cbor_apdu(data, size, cbor_out, sizeof(cbor_out), &cbor_len);
+    uint8_t packed[PCSC_FIDO_SELECT_APDU_MAX];
+    size_t packed_len = 0u;
+    uint8_t cbor_out[PCSC_FIDO_BRIDGE_MAX_APDU];
+    size_t cbor_len = 0u;
+    (void)pcsc_fido_pack_select_fido_apdu(packed, sizeof(packed), &packed_len,
+                                          (data[0] & 1u) != 0u);
+    (void)pcsc_fido_pack_ctap2_cbor_apdu(data, size, cbor_out, sizeof(cbor_out),
+                                         &cbor_len);
   }
 
   return 0;

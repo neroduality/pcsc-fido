@@ -16,11 +16,20 @@
 
 #pragma once
 
+#include "pcsc_fido/pcsc_fido_null.h"
+
 #include <limits.h>
 #include <stdint.h>
 #include <time.h>
 
-static inline time_t pcsc_fido_add_seconds_saturating(time_t base, unsigned seconds) {
+enum {
+  PCSC_FIDO_UTIL_MS_PER_SEC = 1000,
+  PCSC_FIDO_UTIL_MS_PER_SEC_LONG = 1000L,
+  PCSC_FIDO_UTIL_NS_PER_MS = 1000000L,
+};
+
+static inline time_t pcsc_fido_add_seconds_saturating(time_t base,
+                                                      unsigned seconds) {
   if (base > (time_t)(LONG_MAX - (long)seconds)) {
     return (time_t)LONG_MAX;
   }
@@ -28,19 +37,23 @@ static inline time_t pcsc_fido_add_seconds_saturating(time_t base, unsigned seco
 }
 
 static inline int pcsc_fido_timeout_until_ms(time_t deadline) {
-  time_t now = time(nullptr);
+  time_t now = time(PCSC_FIDO_NULL);
   if (deadline <= now) {
     return 0;
   }
-  if (deadline - now > (time_t)(INT32_MAX / 1000)) {
+  if (deadline - now > (time_t)(INT32_MAX / PCSC_FIDO_UTIL_MS_PER_SEC)) {
     return INT32_MAX;
   }
-  return (int)((deadline - now) * 1000);
+  return (int)((deadline - now) * PCSC_FIDO_UTIL_MS_PER_SEC);
 }
 
 static inline void pcsc_fido_sleep_ms(long ms) {
   struct timespec ts;
-  ts.tv_sec = ms / 1000L;
-  ts.tv_nsec = (ms % 1000L) * 1000000L;
-  (void)nanosleep(&ts, nullptr);
+  if (ms <= 0L) {
+    /* Negative timespec fields are EINVAL; treat non-positive as no-op. */
+    return;
+  }
+  ts.tv_sec = ms / PCSC_FIDO_UTIL_MS_PER_SEC_LONG;
+  ts.tv_nsec = (ms % PCSC_FIDO_UTIL_MS_PER_SEC_LONG) * PCSC_FIDO_UTIL_NS_PER_MS;
+  (void)nanosleep(&ts, PCSC_FIDO_NULL);
 }

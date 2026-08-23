@@ -15,7 +15,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Remove build output; recover from root-owned container CI artifacts when needed.
+# Remove build output and local tool caches (nero-nfc-style: plain rm -rf).
+# Bind-mounted local container CI must drop to HOST_UID / restore on exit so
+# these trees stay user-owned; this script does not paper over root leftovers.
 #
 # Usage (from pcsc-fido root):
 #   bash .github/scripts/helper-clean-build-tree.sh [build-dir ...]
@@ -33,32 +35,6 @@ if [[ ${#paths[@]} -eq 0 ]]; then
 fi
 
 pcsc_fido_refuse_root_make
-
-pcsc_fido_remove_build_tree() {
-  local build_dir="$1"
-  local target="${REPO_ROOT}/${build_dir}"
-  if [[ ! -e ${target} ]]; then
-    return 0
-  fi
-  pcsc_fido_repair_tree_ownership "${target}"
-  if rm -rf "${target}" 2>/dev/null; then
-    return 0
-  fi
-  pcsc_fido_local_repair_tree_for_removal "${target}"
-  if rm -rf "${target}" 2>/dev/null; then
-    return 0
-  fi
-  if pcsc_fido_uses_container_ownership_restore "${build_dir}"; then
-    printf 'warning: %s is not fully removable as %s; restoring ownership from container CI\n' \
-      "${build_dir}" "$(id -un)" >&2
-    bash "${SCRIPT_DIR}/helper-restore-bind-mount-ownership.sh" "${build_dir}"
-    rm -rf "${target}"
-    return 0
-  fi
-  printf 'error: cannot remove %s as %s (not a container CI tree; fix permissions manually)\n' \
-    "${build_dir}" "$(id -un)" >&2
-  return 1
-}
 
 declare -A pcsc_fido_clean_seen=()
 pcsc_fido_queue_clean_path() {
@@ -80,7 +56,34 @@ done
 shopt -u nullglob
 
 for build_dir in "${!pcsc_fido_clean_seen[@]}"; do
-  pcsc_fido_remove_build_tree "${build_dir}"
+  target="${REPO_ROOT}/${build_dir}"
+  # Quiet one-shot restore for leftovers from older root container runs; no warnings.
+  if [[ -e ${target} ]] &&
+    pcsc_fido_uses_container_ownership_restore "${build_dir}" &&
+    pcsc_fido_tree_has_root_owned "${target}"; then
+    bash "${SCRIPT_DIR}/helper-restore-bind-mount-ownership.sh" "${build_dir}" >/dev/null 2>&1 || true
+  fi
+  # Never rm -rf .fuzz while make fuzz holds .fuzz/.lock (libFuzzer would lose corpus mid-REDUCE).
+  if [[ (${build_dir} == .fuzz || ${build_dir} == */.fuzz) && -e ${target} ]] &&
+    command -v flock >/dev/null 2>&1; then
+    lock="${target}/.lock"
+    exec 9>"${lock}"
+    if ! flock --nonblock 9; then
+      printf 'warning: skipping %s (make fuzz still running; finish fuzz or kill it, then re-run clean)\n' \
+        "${build_dir}" >&2
+      exec 9>&-
+      continue
+    fi
+    rm -rf "${target}"
+    exec 9>&-
+    continue
+  fi
+  rm -rf "${target}"
 done
 
-rm -rf "${REPO_ROOT}/scan-build-report" 2>/dev/null || true
+rm -rf "${REPO_ROOT}/scan-build-report"
+rm -rf \
+  "${REPO_ROOT}/.mypy_cache" \
+  "${REPO_ROOT}/.ruff_cache" \
+  "${REPO_ROOT}/.pytest_cache" \
+  "${REPO_ROOT}/.cache"

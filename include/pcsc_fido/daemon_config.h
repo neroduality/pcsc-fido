@@ -36,6 +36,9 @@ typedef struct {
   unsigned arm_sec;
 } pcsc_fido_browser_config_t;
 
-PCSC_FIDO_NODISCARD bool pcsc_fido_load_browser_config(pcsc_fido_browser_config_t *cfg);
-void pcsc_fido_print_browser_config(FILE *out, const pcsc_fido_browser_config_t *cfg);
-PCSC_FIDO_NODISCARD const char *pcsc_fido_virtual_key_mode_name(pcsc_fido_virtual_key_mode_t mode);
+PCSC_FIDO_NODISCARD bool pcsc_fido_load_browser_config(
+    pcsc_fido_browser_config_t* cfg);
+void pcsc_fido_print_browser_config(FILE* out,
+                                    const pcsc_fido_browser_config_t* cfg);
+PCSC_FIDO_NODISCARD const char* pcsc_fido_virtual_key_mode_name(
+    pcsc_fido_virtual_key_mode_t mode);

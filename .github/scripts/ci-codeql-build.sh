@@ -16,6 +16,12 @@
 # limitations under the License.
 
 # Traced build for CodeQL: CMake configure + build of pcsc-fido.
+#
+# Layout (must stay disjoint -- see GitHub database-create docs: the DB/CLI must
+# not live under a path the build wipes):
+#   build/codeql-cmake/  -- this script's CMake tree (safe to rm -rf)
+#   build/codeql-cli/    -- local CLI zip/extract (run-codeql-locally.sh)
+#   build/codeql/        -- database + SARIF (run-codeql-locally.sh)
 set -euo pipefail
 
 repo_root="${PCSC_FIDO_ROOT:-$(pwd)}"
@@ -28,11 +34,11 @@ if [[ "$(uname -s)" == "Linux" && ${CODEQL_INSTALL_LINUX_DEPS:-0} == "1" ]]; the
   bash "${repo_root}/.github/scripts/install-linux-deps.sh"
 fi
 
-build_dir="${repo_root}/build/codeql"
+build_dir="${CODEQL_CMAKE_DIR:-${repo_root}/build/codeql-cmake}"
 jobs="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
 
 rm -rf "${build_dir}"
 cmake -S "${repo_root}" -B "${build_dir}" -DCMAKE_BUILD_TYPE=Release
 cmake --build "${build_dir}" --parallel "${jobs}"
 
-printf '── CodeQL traced build complete ──\n'
+printf -- '-- CodeQL traced build complete --\n'

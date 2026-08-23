@@ -25,7 +25,7 @@
 set -euo pipefail
 
 # CTAPHID payload cap (include/pcsc_fido/ctaphid.h) and max framed reassembly size
-# (7609 = 57 + 128×59) as 129×64-byte HID reports (8256 bytes).
+# (7609 = 57 + 128x59) as 129x64-byte HID reports (8256 bytes).
 readonly PCSC_FIDO_CTAPHID_MAX_PAYLOAD=8192
 readonly PCSC_FIDO_CTAPHID_MAX_FRAMED_PACKET_STREAM=8256
 
@@ -165,7 +165,7 @@ path = pathlib.Path(sys.argv[1])
 path.write_bytes(bytes([0x5A]) + struct.pack(">I", max_len))
 PY
 
-  # Single CTAPHID INIT (PING, 1-byte payload) — tests/test_request_assembly.c pattern.
+  # Single CTAPHID INIT (PING, 1-byte payload) -- tests/test_request_assembly.c pattern.
   python3 - "${corpus_root}/ctaphid/single_ping" <<'PY'
 import pathlib
 import sys
@@ -227,15 +227,28 @@ while remaining:
 pathlib.Path(sys.argv[1]).write_bytes(packets)
 PY
 
-  # SELECT and short CTAP APDUs — tests/test_apdu.c vectors.
+  # SELECT and short CTAP APDUs -- tests/test_apdu.c vectors.
   printf '\x00\xA4\x04\x00\x08\xA0\x00\x00\x06\x47\x2F\x00\x01' >"${corpus_root}/apdu/select_fido"
   printf '\x80\x10\x00\x00\x03\x04\xA1\x00\x00' >"${corpus_root}/apdu/short_ctap"
 }
 
 corpus_root="${build_dir}/corpus"
+mkdir -p "$build_dir"
+# Hold an exclusive lock for the whole fuzz session so `make clean` will not
+# rm -rf .fuzz while libFuzzer is writing REDUCE corpora (see helper-clean-build-tree.sh).
+fuzz_lock="${build_dir}/.lock"
+exec 9>"${fuzz_lock}"
+if command -v flock >/dev/null 2>&1; then
+  if ! flock --nonblock 9; then
+    printf 'error: another fuzz session holds %s (wait for it or remove a stale lock)\n' \
+      "${fuzz_lock}" >&2
+    exit 1
+  fi
+fi
+
 setup_corpus "$corpus_root"
 
-printf '── fuzz configure (%s; -fsanitize=%s) ──\n' "$cc" "$fuzz_sanitize"
+printf -- '-- fuzz configure (%s; -fsanitize=%s) --\n' "$cc" "$fuzz_sanitize"
 cmake -S "$repo_root" -B "$build_dir" \
   -DCMAKE_BUILD_TYPE=Debug \
   -DCMAKE_C_COMPILER="$cc" \
@@ -247,7 +260,7 @@ cmake -S "$repo_root" -B "$build_dir" \
   -DPCSC_FIDO_ENABLE_TSAN=OFF \
   -DPCSC_FIDO_ENABLE_COVERAGE=OFF
 
-printf '── fuzz build ──\n'
+printf -- '-- fuzz build --\n'
 cmake --build "$build_dir" --target pcsc_fido_fuzzers -j"$(nproc 2>/dev/null || echo 2)"
 
 if [[ $build_only -eq 1 ]]; then
@@ -263,10 +276,15 @@ run_fuzzer() {
   local corpus="${corpus_root}/${corpus_subdir}"
   local artifacts="${artifact_dir}/${corpus_subdir}"
 
-  printf '── %s (max_total_time=%ss, max_len=%s, timeout=%ss) ──\n' \
+  mkdir -p "$corpus" "$artifacts"
+  printf -- '-- %s (max_total_time=%ss, max_len=%s, timeout=%ss) --\n' \
     "$name" "$fuzz_seconds" "$max_len" "$fuzz_unit_timeout"
   printf 'note: libFuzzer runs up to %ss per target; progress lines below (quick check: FUZZ_SECONDS=30 make fuzz)\n' \
     "$fuzz_seconds"
+  if [[ ! -x ${bin} ]]; then
+    printf 'error: %s missing (was .fuzz removed mid-run? avoid concurrent make clean)\n' "$bin" >&2
+    return 1
+  fi
   if ! "$bin" "$corpus" -runs=0 -max_len="$max_len" -timeout="$fuzz_unit_timeout"; then
     printf 'error: %s corpus reload failed\n' "$name" >&2
     return 1
@@ -279,7 +297,12 @@ run_fuzzer() {
     -print_final_stats=1 \
     -verbosity="$fuzz_verbosity" \
     -report_slow_units=1; then
-    printf 'error: %s reported findings (see %s)\n' "$name" "${artifacts}/" >&2
+    if [[ ! -d ${corpus} ]]; then
+      printf 'error: %s corpus vanished mid-run (%s); do not run make clean while fuzzing\n' \
+        "$name" "$corpus" >&2
+    else
+      printf 'error: %s reported findings (see %s)\n' "$name" "${artifacts}/" >&2
+    fi
     return 1
   fi
 }

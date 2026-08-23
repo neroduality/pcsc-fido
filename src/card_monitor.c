@@ -14,8 +14,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#define _POSIX_C_SOURCE 200809L
-
 #include "pcsc_fido/card_monitor.h"
 #include "pcsc_fido/pcsc_bridge_limits.h"
 #include "pcsc_fido/pcsc_log.h"
@@ -32,27 +30,30 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include "pcsc_fido/mem_util.h"
 
 static void short_sleep(void) {
   pcsc_fido_sleep_ms((long)PCSC_FIDO_READER_STATUS_POLL_MS);
 }
 
-static bool any_eligible_card_present(const SCARD_READERSTATE states[PCSC_FIDO_BRIDGE_MAX_READERS],
-                                      size_t count) {
+static bool any_eligible_card_present(
+    const SCARD_READERSTATE states[PCSC_FIDO_BRIDGE_MAX_READERS],
+    size_t count) {
   for (size_t i = 0u; i < count; i++) {
-    if (pcsc_fido_reader_state_has_card((const pcsc_fido_reader_state_t *)&states[i])) {
+    if (pcsc_fido_reader_state_has_card(
+            (const pcsc_fido_reader_state_t*)&states[i])) {
       return true;
     }
   }
   return false;
 }
 
-static void *monitor_main(void *arg) {
-  pcsc_fido_card_monitor_t *monitor = (pcsc_fido_card_monitor_t *)arg;
+static void* monitor_main(void* arg) {
+  pcsc_fido_card_monitor_t* monitor = (pcsc_fido_card_monitor_t*)arg;
   bool saw_eligible_present = false;
   bool have_observation = false;
-  if (monitor == nullptr) {
-    return nullptr;
+  if (monitor == PCSC_FIDO_NULL) {
+    return PCSC_FIDO_NULL;
   }
   while (!atomic_load_explicit(&monitor->stop, memory_order_relaxed)) {
     SCARDCONTEXT ctx = 0;
@@ -60,13 +61,15 @@ static void *monitor_main(void *arg) {
     DWORD readers_len = sizeof(readers);
     SCARD_READERSTATE states[PCSC_FIDO_BRIDGE_MAX_READERS];
     size_t count;
-    if (!pcsc_fido_reader_establish_context(&ctx, PCSC_FIDO_READER_CTX_DAEMON, nullptr, 0u)) {
+    if (!pcsc_fido_reader_establish_context(&ctx, PCSC_FIDO_READER_CTX_DAEMON,
+                                            PCSC_FIDO_NULL, 0u)) {
       short_sleep();
       continue;
     }
-    memset(readers, 0, sizeof(readers));
-    memset(states, 0, sizeof(states));
-    if (!pcsc_fido_reader_list_snapshot(ctx, readers, &readers_len, nullptr, 0u)) {
+    pcsc_fido_zero_bytes(readers, sizeof(readers));
+    pcsc_fido_zero_bytes(states, sizeof(states));
+    if (!pcsc_fido_reader_list_snapshot(ctx, readers, &readers_len,
+                                        PCSC_FIDO_NULL, 0u)) {
       (void)SCardReleaseContext(ctx);
       short_sleep();
       continue;
@@ -78,11 +81,11 @@ static void *monitor_main(void *arg) {
       short_sleep();
       continue;
     }
-    if (SCardGetStatusChange(ctx, PCSC_FIDO_READER_STATUS_POLL_MS, states, (DWORD)count) ==
-        SCARD_S_SUCCESS) {
+    if (SCardGetStatusChange(ctx, PCSC_FIDO_READER_STATUS_POLL_MS, states,
+                             (DWORD)count) == SCARD_S_SUCCESS) {
       bool eligible_present = any_eligible_card_present(states, count);
       if (have_observation && !saw_eligible_present && eligible_present &&
-          monitor->wake != nullptr) {
+          monitor->wake != PCSC_FIDO_NULL) {
         monitor->wake(monitor->wake_ctx);
       }
       saw_eligible_present = eligible_present;
@@ -91,32 +94,35 @@ static void *monitor_main(void *arg) {
     (void)SCardReleaseContext(ctx);
     short_sleep();
   }
-  return nullptr;
+  return PCSC_FIDO_NULL;
 }
 
-bool pcsc_fido_card_monitor_start(pcsc_fido_card_monitor_t *monitor,
-                                  pcsc_fido_card_monitor_wake_fn wake, void *wake_ctx) {
-  if (monitor == nullptr || wake == nullptr) {
+bool pcsc_fido_card_monitor_start(pcsc_fido_card_monitor_t* monitor,
+                                  pcsc_fido_card_monitor_wake_fn_t wake,
+                                  void* wake_ctx) {
+  if (monitor == PCSC_FIDO_NULL || wake == PCSC_FIDO_NULL) {
     return false;
   }
-  memset(monitor, 0, sizeof(*monitor));
+  pcsc_fido_zero_bytes(monitor, sizeof(*monitor));
   atomic_init(&monitor->stop, false);
   monitor->wake = wake;
   monitor->wake_ctx = wake_ctx;
-  int rc = pthread_create(&monitor->thread, nullptr, monitor_main, monitor);
+  int rc =
+      pthread_create(&monitor->thread, PCSC_FIDO_NULL, monitor_main, monitor);
   if (rc != 0) {
-    pcsc_fido_log(PCSC_FIDO_LOG_ERROR, "card monitor thread start failed: %s", strerror(rc));
+    pcsc_fido_log(PCSC_FIDO_LOG_ERROR, "card monitor thread start failed: %s",
+                  strerror(rc));
     return false;
   }
   monitor->running = true;
   return true;
 }
 
-void pcsc_fido_card_monitor_stop(pcsc_fido_card_monitor_t *monitor) {
-  if (monitor == nullptr || !monitor->running) {
+void pcsc_fido_card_monitor_stop(pcsc_fido_card_monitor_t* monitor) {
+  if (monitor == PCSC_FIDO_NULL || !monitor->running) {
     return;
   }
   atomic_store_explicit(&monitor->stop, true, memory_order_relaxed);
-  (void)pthread_join(monitor->thread, nullptr);
+  (void)pthread_join(monitor->thread, PCSC_FIDO_NULL);
   monitor->running = false;
 }

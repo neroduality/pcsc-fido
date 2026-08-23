@@ -24,9 +24,10 @@
 #include <linux/uhid.h>
 #include <stdbool.h>
 
-void pcsc_fido_daemon_handle_uhid_event(int fd, const struct uhid_event *ev,
-                                        pcsc_fido_daemon_pending_request_t *pending,
-                                        const pcsc_fido_daemon_request_context_t *request_ctx);
+void pcsc_fido_daemon_handle_uhid_event(
+    int fd, const struct uhid_event* ev,
+    pcsc_fido_daemon_pending_request_t* pending,
+    const pcsc_fido_daemon_request_context_t* request_ctx);
 
 typedef struct {
   int uhid_fd;
@@ -34,12 +35,12 @@ typedef struct {
 } pcsc_fido_daemon_uhid_poll_ctx_t;
 
 // Poll the UHID fd (and the signal wake fd when installed). Returns:
-//   0 — handled an event or timed out cleanly (continue loop)
-//   1 — stop requested
-//  -1 — I/O error
-PCSC_FIDO_NODISCARD int
-pcsc_fido_daemon_poll_uhid_event(pcsc_fido_daemon_uhid_poll_ctx_t *ctx,
-                                 pcsc_fido_daemon_pending_request_t *pending,
-                                 const pcsc_fido_daemon_request_context_t *request_ctx);
+//   0 -- handled an event or timed out cleanly (continue loop)
+//   1 -- stop requested
+//  -1 -- I/O error
+PCSC_FIDO_NODISCARD int pcsc_fido_daemon_poll_uhid_event(
+    const pcsc_fido_daemon_uhid_poll_ctx_t* ctx,
+    pcsc_fido_daemon_pending_request_t* pending,
+    const pcsc_fido_daemon_request_context_t* request_ctx);
 
 PCSC_FIDO_NODISCARD int pcsc_fido_daemon_run_always_mode(int uhid_fd);

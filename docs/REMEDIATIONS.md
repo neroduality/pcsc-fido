@@ -23,10 +23,10 @@ limitations under the License.
 
 | | USB HID key | pcsc-fido + NFC |
 | - | ----------- | --------------- |
-| Path | USB HID → **hidraw** (CTAPHID to token firmware) | Browser → **hidraw** (virtual key) → kernel UHID → **/dev/uhid** (bridge) → **pcscd** → reader → NFC token |
-| Browser visibility | While plugged in | Default **tap-arm**: hidden until a card is present, armed for a timed window (`PCSC_FIDO_ARM_SEC`), and re-armed only after an absent → present transition |
+| Path | USB HID -> **hidraw** (CTAPHID to token firmware) | Browser -> **hidraw** (virtual key) -> kernel UHID -> **/dev/uhid** (bridge) -> **pcscd** -> reader -> NFC token |
+| Browser visibility | While plugged in | Default **tap-arm**: hidden until a card is present, armed for a timed window (`PCSC_FIDO_ARM_SEC`), and re-armed only after an absent -> present transition |
 | Presence | Touch button (many models) | Tap/hold on reader; touchless cards treat tap as presence; NFC tokens with a separate touch sensor may require an additional touch when prompted |
-| PIN / UV | Browser ↔ token | Same rules; bridge preserves CTAP CBOR fields (`clientPIN`, `pinUvAuthParam`, `options.uv`, etc.) and does not bypass browser PIN prompts |
+| PIN / UV | Browser <-> token | Same rules; bridge preserves CTAP CBOR fields (`clientPIN`, `pinUvAuthParam`, `options.uv`, etc.) and does not bypass browser PIN prompts |
 | Trust (CTAPHID) | **hidraw** peer = token firmware (USB device). Handles CTAPHID; keys on USB key. **TCB (trusted computing base):** USB FIDO gadget; host USB/hid stack; USB token firmware | **hidraw** peer = **bridge** (forwards CTAPHID over PC/SC; not NFC card firmware). Handles CTAPHID; keys on NFC card. **TCB (trusted computing base):** bridge ([shortcomings](#shortcomings)); host UHID/hid stack; pcscd; CCID reader + driver; NFC card firmware |
 
 ## Safeguards for `pcsc-fido` (NFC-specific)
@@ -44,12 +44,10 @@ limitations under the License.
 
 ## Shortcomings
 
-**pcsc-fido** is a **bridge**, not a native Linux WebAuthn path (see [Trust](#bridge-vs-usb-hid)). The browser’s **hidraw** peer is this daemon, not NFC card firmware; CTAPHID is forwarded over PC/SC while the card holds the signing keys. That enlarges the **trusted computing base** beyond USB’s (USB FIDO gadget, host USB/hid stack, USB token firmware) to include the **bridge**, host UHID/hid stack, **pcscd**, CCID reader + driver, and NFC card firmware. The same hidraw observe/alter risk applies: a **rogue USB FIDO gadget** is a malicious peer on USB, and a **compromised bridge** is the parallel risk here.
+**pcsc-fido** is a **bridge**, not a native Linux WebAuthn path (see [Trust](#bridge-vs-usb-hid)). The browser's **hidraw** peer is this daemon, not NFC card firmware; CTAPHID is forwarded over PC/SC while the card holds the signing keys. That enlarges the **trusted computing base** beyond USB's (USB FIDO gadget, host USB/hid stack, USB token firmware) to include the **bridge**, host UHID/hid stack, **pcscd**, CCID reader + driver, and NFC card firmware. The same hidraw observe/alter risk applies: a **rogue USB FIDO gadget** is a malicious peer on USB, and a **compromised bridge** is the parallel risk here.
 
 A compromised **bridge** still cannot extract private keys from the card or sign without card cooperation (tap/PIN/UV as required); honest RPs still verify challenge, origin, and `rpId`. The **bridge** also cannot fix compromised hosts, replaced packages, malicious browsers, card firmware bugs, browser/RP state, or broken **pcscd**/reader stacks. It adds timing-sensitive NFC UX and reader-selection/startup seams. It is tested on real hardware but is not a formal certification boundary.
 
 ## Preferred long-term outcome
 
-The best remediation is for Linux to make this bridge obsolete: browsers and desktop credential services should reach NFC FIDO cards on CCID readers through PC/SC without a UHID shim. The likely direction is the Linux Credentials stack — for example [libwebauthn](https://github.com/linux-credentials/libwebauthn), [credentialsd](https://github.com/linux-credentials/credentialsd), and portal integration — so WebAuthn and `pcscd` share one platform path. Until that path is broadly shipped and used by browsers, unmodified Linux browser tabs still speak CTAPHID over hidraw, and **pcsc-fido** aims to keep this stopgap narrow, observable, packaged, and hardened.
-
-Last Updated: 2026-05-30
+The best remediation is for Linux to make this bridge obsolete: browsers and desktop credential services should reach NFC FIDO cards on CCID readers through PC/SC without a UHID shim. The likely direction is the Linux Credentials stack -- for example [libwebauthn](https://github.com/linux-credentials/libwebauthn), [credentialsd](https://github.com/linux-credentials/credentialsd), and portal integration -- so WebAuthn and `pcscd` share one platform path. Until that path is broadly shipped and used by browsers, unmodified Linux browser tabs still speak CTAPHID over hidraw, and **pcsc-fido** aims to keep this stopgap narrow, observable, packaged, and hardened.

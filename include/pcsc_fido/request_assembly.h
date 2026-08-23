@@ -34,17 +34,19 @@ typedef struct {
 } pcsc_fido_daemon_pending_request_t;
 
 PCSC_FIDO_STATIC_ASSERT((unsigned)PCSC_FIDO_DAEMON_PENDING_MAX ==
-                          (unsigned)PCSC_FIDO_CTAPHID_MAX_PAYLOAD,
+                            (unsigned)PCSC_FIDO_CTAPHID_MAX_PAYLOAD,
                         "daemon pending buffer must match CTAPHID payload cap");
 
-typedef void (*pcsc_fido_daemon_request_handler_fn)(const void *ctx, uint32_t request_cid,
-                                                    uint8_t cmd, const uint8_t *payload,
-                                                    size_t payload_len);
+typedef void (*pcsc_fido_daemon_request_handler_fn_t)(const void* ctx,
+                                                      uint32_t request_cid,
+                                                      uint8_t cmd,
+                                                      const uint8_t* payload,
+                                                      size_t payload_len);
 
-void pcsc_fido_daemon_pending_request_reset(pcsc_fido_daemon_pending_request_t *pending);
+void pcsc_fido_daemon_pending_request_reset(
+    pcsc_fido_daemon_pending_request_t* pending);
 
-PCSC_FIDO_NODISCARD bool
-pcsc_fido_daemon_request_assembler_feed(int fd, pcsc_fido_daemon_pending_request_t *pending,
-                                        const uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE],
-                                        pcsc_fido_daemon_request_handler_fn handle_request,
-                                        const void *ctx);
+PCSC_FIDO_NODISCARD bool pcsc_fido_daemon_request_assembler_feed(
+    int fd, pcsc_fido_daemon_pending_request_t* pending,
+    const uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE],
+    pcsc_fido_daemon_request_handler_fn_t handle_request, const void* ctx);

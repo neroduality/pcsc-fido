@@ -14,8 +14,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#define _POSIX_C_SOURCE 200809L
-
 #include "pcsc_fido/card_monitor.h"
 #include "pcsc_fido/daemon_signals.h"
 #include "pcsc_fido/daemon_uhid_loop.h"
@@ -23,6 +21,8 @@
 #include "pcsc_fido/pcsc_log.h"
 #include "pcsc_fido/pcsc_util.h"
 #include "pcsc_fido/tap_arm.h"
+#include "pcsc_fido/ctaphid.h"
+#include "pcsc_fido/pcsc_bridge_limits.h"
 #include "pcsc_fido/uhid_transport.h"
 
 #include <errno.h>
@@ -31,6 +31,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include "pcsc_fido/mem_util.h"
 
 #ifndef O_CLOEXEC
 #define O_CLOEXEC 0
@@ -46,7 +47,7 @@ enum {
 
 typedef struct {
   int uhid_fd;
-  int card_wake_pipe[2];
+  int card_wake_pipe[PCSC_FIDO_PIPE_FD_COUNT];
   pcsc_fido_card_monitor_t monitor;
   bool monitor_started;
   bool created;
@@ -77,7 +78,7 @@ static bool set_nonblock(int fd) {
 }
 
 static void drain_wake_pipe(int fd) {
-  uint8_t buf[32];
+  uint8_t buf[PCSC_FIDO_WAKE_PIPE_DRAIN_BUF_LEN];
   for (;;) {
     ssize_t got = read(fd, buf, sizeof(buf));
     if (got > 0) {
@@ -90,13 +91,13 @@ static void drain_wake_pipe(int fd) {
   }
 }
 
-static void card_present_wake(void *ctx) {
+static void card_present_wake(void* ctx) {
   int fd;
   uint8_t byte = 1u;
-  if (ctx == nullptr) {
+  if (ctx == PCSC_FIDO_NULL) {
     return;
   }
-  fd = *(int *)ctx;
+  fd = *(int*)ctx;
   for (;;) {
     ssize_t wrote = write(fd, &byte, sizeof(byte));
     if (wrote == (ssize_t)sizeof(byte) || (wrote < 0 && errno == EAGAIN)) {
@@ -105,33 +106,37 @@ static void card_present_wake(void *ctx) {
     if (wrote < 0 && errno == EINTR) {
       continue;
     }
-    perror("pcsc-fido card wake");
+    pcsc_fido_log(PCSC_FIDO_LOG_ERROR, "%s: %s", "pcsc-fido card wake",
+                  strerror(errno));
     return;
   }
 }
 
-static bool arm_virtual_key(pcsc_fido_tap_arm_state_t *state,
-                            const pcsc_fido_browser_config_t *cfg) {
-  if (state == nullptr || cfg == nullptr) {
+static bool arm_virtual_key(pcsc_fido_tap_arm_state_t* state,
+                            const pcsc_fido_browser_config_t* cfg) {
+  if (state == PCSC_FIDO_NULL || cfg == PCSC_FIDO_NULL) {
     return false;
   }
   pcsc_fido_daemon_pending_request_reset(&state->pending);
   pcsc_fido_bridge_reset();
   if (!state->created && !pcsc_fido_daemon_create_uhid_device(state->uhid_fd)) {
-    perror("UHID_CREATE2");
+    pcsc_fido_log(PCSC_FIDO_LOG_ERROR, "%s: %s", "UHID_CREATE2",
+                  strerror(errno));
     return false;
   }
   state->created = true;
-  state->deadline = pcsc_fido_add_seconds_saturating(time(nullptr), cfg->arm_sec);
+  state->deadline =
+      pcsc_fido_add_seconds_saturating(time(PCSC_FIDO_NULL), cfg->arm_sec);
   pcsc_fido_log(PCSC_FIDO_LOG_INFO,
-                "NFC key detected; virtual FIDO key armed for %u seconds. Keep the key on "
+                "NFC key detected; virtual FIDO key armed for %u seconds. Keep "
+                "the key on "
                 "the reader while WebAuthn completes.",
                 cfg->arm_sec);
   return true;
 }
 
-static void disarm_virtual_key(pcsc_fido_tap_arm_state_t *state) {
-  if (state == nullptr || !state->created) {
+static void disarm_virtual_key(pcsc_fido_tap_arm_state_t* state) {
+  if (state == PCSC_FIDO_NULL || !state->created) {
     return;
   }
   pcsc_fido_daemon_destroy_uhid_device(state->uhid_fd);
@@ -142,8 +147,8 @@ static void disarm_virtual_key(pcsc_fido_tap_arm_state_t *state) {
   pcsc_fido_log(PCSC_FIDO_LOG_INFO, "virtual FIDO key arm window expired");
 }
 
-static bool restart_card_monitor(pcsc_fido_tap_arm_state_t *state) {
-  if (state == nullptr) {
+static bool restart_card_monitor(pcsc_fido_tap_arm_state_t* state) {
+  if (state == PCSC_FIDO_NULL) {
     return false;
   }
   if (state->monitor_started) {
@@ -158,31 +163,32 @@ static bool restart_card_monitor(pcsc_fido_tap_arm_state_t *state) {
   return true;
 }
 
-static void tap_arm_on_timeout(pcsc_fido_tap_arm_state_t *state) {
+static void tap_arm_on_timeout(pcsc_fido_tap_arm_state_t* state) {
   disarm_virtual_key(state);
-  if (state != nullptr && state->card_wake_pipe[0] >= 0) {
+  if (state != PCSC_FIDO_NULL && state->card_wake_pipe[0] >= 0) {
     drain_wake_pipe(state->card_wake_pipe[0]);
   }
   (void)restart_card_monitor(state);
 }
 
-static bool arm_window_expired(const pcsc_fido_tap_arm_state_t *state, int *timeout_ms) {
+static bool arm_window_expired(const pcsc_fido_tap_arm_state_t* state,
+                               int* timeout_ms) {
   int remaining_ms;
-  if (state == nullptr || !state->created) {
-    if (timeout_ms != nullptr) {
+  if (state == PCSC_FIDO_NULL || !state->created) {
+    if (timeout_ms != PCSC_FIDO_NULL) {
       *timeout_ms = PCSC_FIDO_TAP_ARM_DORMANT_POLL_MS;
     }
     return false;
   }
   remaining_ms = pcsc_fido_timeout_until_ms(state->deadline);
-  if (timeout_ms != nullptr) {
+  if (timeout_ms != PCSC_FIDO_NULL) {
     *timeout_ms = remaining_ms;
   }
   return remaining_ms == 0;
 }
 
-static void close_card_wake_pipe(pcsc_fido_tap_arm_state_t *state) {
-  if (state == nullptr) {
+static void close_card_wake_pipe(pcsc_fido_tap_arm_state_t* state) {
+  if (state == PCSC_FIDO_NULL) {
     return;
   }
   if (state->card_wake_pipe[0] >= 0) {
@@ -195,52 +201,59 @@ static void close_card_wake_pipe(pcsc_fido_tap_arm_state_t *state) {
   }
 }
 
-static bool open_card_wake_pipe(pcsc_fido_tap_arm_state_t *state) {
-  if (state == nullptr) {
+static bool open_card_wake_pipe(pcsc_fido_tap_arm_state_t* state) {
+  if (state == PCSC_FIDO_NULL) {
     return false;
   }
   if (pipe(state->card_wake_pipe) != 0) {
-    perror("pipe");
+    pcsc_fido_log(PCSC_FIDO_LOG_ERROR, "%s: %s", "pipe", strerror(errno));
     return false;
   }
-  if (!set_cloexec(state->card_wake_pipe[0]) || !set_cloexec(state->card_wake_pipe[1]) ||
-      !set_nonblock(state->card_wake_pipe[0]) || !set_nonblock(state->card_wake_pipe[1])) {
+  if (!set_cloexec(state->card_wake_pipe[0]) ||
+      !set_cloexec(state->card_wake_pipe[1]) ||
+      !set_nonblock(state->card_wake_pipe[0]) ||
+      !set_nonblock(state->card_wake_pipe[1])) {
     close_card_wake_pipe(state);
     return false;
   }
   return true;
 }
 
-int pcsc_fido_tap_arm_run(int uhid_fd, const pcsc_fido_browser_config_t *cfg) {
+int pcsc_fido_tap_arm_run(int uhid_fd, const pcsc_fido_browser_config_t* cfg) {
+  /* Tap-to-arm loop: wait for card wake, create the virtual UHID key
+   * for arm_sec, poll signal/wake/UHID, then destroy on timeout or stop.
+   * Stale wakes after the monitor stops are drained and ignored. */
   pcsc_fido_tap_arm_state_t state;
   pcsc_fido_daemon_uhid_poll_ctx_t poll_ctx;
   int status = 0;
-  if (cfg == nullptr) {
+  if (cfg == PCSC_FIDO_NULL) {
     return 1;
   }
-  memset(&state, 0, sizeof(state));
+  pcsc_fido_zero_bytes(&state, sizeof(state));
   state.uhid_fd = uhid_fd;
   state.card_wake_pipe[0] = -1;
   state.card_wake_pipe[1] = -1;
-  state.assigned_cid = 0x4E464301u;
+  state.assigned_cid = PCSC_FIDO_DEFAULT_ASSIGNED_CID;
   state.request_ctx.fd = uhid_fd;
   state.request_ctx.assigned_cid = &state.assigned_cid;
   pcsc_fido_daemon_pending_request_reset(&state.pending);
   if (!open_card_wake_pipe(&state)) {
     return 1;
   }
-  if (!pcsc_fido_card_monitor_start(&state.monitor, card_present_wake, &state.card_wake_pipe[1])) {
+  if (!pcsc_fido_card_monitor_start(&state.monitor, card_present_wake,
+                                    &state.card_wake_pipe[1])) {
     pcsc_fido_log(PCSC_FIDO_LOG_ERROR, "failed to start PC/SC card monitor");
     close_card_wake_pipe(&state);
     return 1;
   }
   state.monitor_started = true;
   pcsc_fido_log(PCSC_FIDO_LOG_INFO,
-                "place the NFC key on the reader to arm the virtual FIDO key for %u seconds",
+                "place the NFC key on the reader to arm the virtual FIDO key "
+                "for %u seconds",
                 cfg->arm_sec);
   poll_ctx.uhid_fd = uhid_fd;
   while (!pcsc_fido_daemon_stop_requested()) {
-    struct pollfd fds[3];
+    struct pollfd fds[PCSC_FIDO_TAP_ARM_POLLFD_MAX];
     nfds_t nfds = 0;
     int signal_fd = pcsc_fido_daemon_signal_poll_fd();
     int poll_timeout_ms;
@@ -272,7 +285,7 @@ int pcsc_fido_tap_arm_run(int uhid_fd, const pcsc_fido_browser_config_t *cfg) {
       if (errno == EINTR) {
         continue;
       }
-      perror("poll");
+      pcsc_fido_log(PCSC_FIDO_LOG_ERROR, "%s: %s", "poll", strerror(errno));
       status = 1;
       break;
     }
@@ -288,7 +301,7 @@ int pcsc_fido_tap_arm_run(int uhid_fd, const pcsc_fido_browser_config_t *cfg) {
       }
       continue;
     }
-    if (arm_window_expired(&state, nullptr)) {
+    if (arm_window_expired(&state, PCSC_FIDO_NULL)) {
       tap_arm_on_timeout(&state);
       continue;
     }
@@ -319,7 +332,8 @@ int pcsc_fido_tap_arm_run(int uhid_fd, const pcsc_fido_browser_config_t *cfg) {
       }
       if (state.created && fds[i].fd == uhid_fd) {
         poll_ctx.poll_timeout_ms = 0;
-        rv = pcsc_fido_daemon_poll_uhid_event(&poll_ctx, &state.pending, &state.request_ctx);
+        rv = pcsc_fido_daemon_poll_uhid_event(&poll_ctx, &state.pending,
+                                              &state.request_ctx);
         if (rv < 0) {
           status = 1;
           goto out;
@@ -332,6 +346,7 @@ int pcsc_fido_tap_arm_run(int uhid_fd, const pcsc_fido_browser_config_t *cfg) {
     }
   }
 out:
+  pcsc_fido_daemon_pending_request_reset(&state.pending);
   if (state.monitor_started) {
     pcsc_fido_card_monitor_stop(&state.monitor);
   }

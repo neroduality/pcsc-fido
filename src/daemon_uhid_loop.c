@@ -14,12 +14,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#define _POSIX_C_SOURCE 200809L
-
 #include "pcsc_fido/daemon_hid.h"
 #include "pcsc_fido/daemon_rate_limit.h"
 #include "pcsc_fido/daemon_signals.h"
 #include "pcsc_fido/daemon_uhid_loop.h"
+#include "pcsc_fido/pcsc_bridge_limits.h"
+#include "pcsc_fido/ctaphid.h"
 #include "pcsc_fido/pcsc_bridge.h"
 #include "pcsc_fido/pcsc_log.h"
 #include "pcsc_fido/uhid_transport.h"
@@ -31,41 +31,48 @@
 #include <string.h>
 #include <unistd.h>
 
-void pcsc_fido_daemon_handle_uhid_event(int fd, const struct uhid_event *ev,
-                                        pcsc_fido_daemon_pending_request_t *pending,
-                                        const pcsc_fido_daemon_request_context_t *request_ctx) {
-  if (ev == nullptr || pending == nullptr || request_ctx == nullptr) {
+void pcsc_fido_daemon_handle_uhid_event(
+    int fd, const struct uhid_event* ev,
+    pcsc_fido_daemon_pending_request_t* pending,
+    const pcsc_fido_daemon_request_context_t* request_ctx) {
+  if (ev == PCSC_FIDO_NULL || pending == PCSC_FIDO_NULL ||
+      request_ctx == PCSC_FIDO_NULL) {
     return;
   }
   if (ev->type == UHID_OUTPUT) {
-    const uint8_t *data;
+    const uint8_t* data;
     if (pcsc_fido_daemon_output_packet_data(ev, &data)) {
       if (!pcsc_fido_rate_limit_allow_ctaphid()) {
-        (void)pcsc_fido_daemon_send_hid_error(fd, pcsc_fido_daemon_hid_packet_cid(data),
-                                              PCSC_FIDO_DAEMON_ERR_CHANNEL_BUSY);
+        (void)pcsc_fido_daemon_send_hid_error(
+            fd, pcsc_fido_daemon_hid_packet_cid(data),
+            PCSC_FIDO_DAEMON_ERR_CHANNEL_BUSY);
       } else if (!pcsc_fido_daemon_request_assembler_feed(
-                   fd, pending, data,
-                   (pcsc_fido_daemon_request_handler_fn)pcsc_fido_daemon_handle_hid_request,
-                   request_ctx)) {
+                     fd, pending, data,
+                     (pcsc_fido_daemon_request_handler_fn_t)
+                         pcsc_fido_daemon_handle_hid_request,
+                     request_ctx)) {
         pcsc_fido_log(PCSC_FIDO_LOG_ERROR, "internal request assembly error");
       }
     }
   } else if (ev->type == UHID_CLOSE || ev->type == UHID_STOP) {
-    pcsc_fido_log(PCSC_FIDO_LOG_INFO, "UHID client closed; resetting PC/SC session");
+    pcsc_fido_log(PCSC_FIDO_LOG_INFO,
+                  "UHID client closed; resetting PC/SC session");
     pcsc_fido_daemon_pending_request_reset(pending);
     pcsc_fido_bridge_reset();
   }
 }
 
-static int read_uhid_event(int fd, pcsc_fido_daemon_pending_request_t *pending,
-                           const pcsc_fido_daemon_request_context_t *request_ctx) {
+static int read_uhid_event(
+    int fd, pcsc_fido_daemon_pending_request_t* pending,
+    const pcsc_fido_daemon_request_context_t* request_ctx) {
   struct uhid_event ev;
   ssize_t got = read(fd, &ev, sizeof(ev));
   if (got < 0) {
     if (errno == EINTR || errno == EAGAIN) {
       return 0;
     }
-    perror("read /dev/uhid");
+    pcsc_fido_log(PCSC_FIDO_LOG_ERROR, "%s: %s", "read /dev/uhid",
+                  strerror(errno));
     return -1;
   }
   if (got != (ssize_t)sizeof(ev)) {
@@ -75,14 +82,16 @@ static int read_uhid_event(int fd, pcsc_fido_daemon_pending_request_t *pending,
   return 0;
 }
 
-int pcsc_fido_daemon_poll_uhid_event(pcsc_fido_daemon_uhid_poll_ctx_t *ctx,
-                                     pcsc_fido_daemon_pending_request_t *pending,
-                                     const pcsc_fido_daemon_request_context_t *request_ctx) {
-  struct pollfd fds[2];
+int pcsc_fido_daemon_poll_uhid_event(
+    const pcsc_fido_daemon_uhid_poll_ctx_t* ctx,
+    pcsc_fido_daemon_pending_request_t* pending,
+    const pcsc_fido_daemon_request_context_t* request_ctx) {
+  struct pollfd fds[PCSC_FIDO_UHID_POLLFD_MAX];
   nfds_t nfds = 0;
   int signal_fd;
   int rv;
-  if (ctx == nullptr || pending == nullptr || request_ctx == nullptr) {
+  if (ctx == PCSC_FIDO_NULL || pending == PCSC_FIDO_NULL ||
+      request_ctx == PCSC_FIDO_NULL) {
     return -1;
   }
   if (pcsc_fido_daemon_stop_requested()) {
@@ -104,7 +113,7 @@ int pcsc_fido_daemon_poll_uhid_event(pcsc_fido_daemon_uhid_poll_ctx_t *ctx,
     if (errno == EINTR) {
       return 0;
     }
-    perror("poll");
+    pcsc_fido_log(PCSC_FIDO_LOG_ERROR, "%s: %s", "poll", strerror(errno));
     return -1;
   }
   if (rv == 0) {
@@ -123,24 +132,27 @@ int pcsc_fido_daemon_poll_uhid_event(pcsc_fido_daemon_uhid_poll_ctx_t *ctx,
 }
 
 int pcsc_fido_daemon_run_always_mode(int uhid_fd) {
-  uint32_t assigned_cid = 0x4E464301u;
+  uint32_t assigned_cid = PCSC_FIDO_DEFAULT_ASSIGNED_CID;
   pcsc_fido_daemon_request_context_t request_ctx;
   pcsc_fido_daemon_pending_request_t pending;
   pcsc_fido_daemon_uhid_poll_ctx_t poll_ctx = {
-    .uhid_fd = uhid_fd,
-    .poll_timeout_ms = 1000,
+      .uhid_fd = uhid_fd,
+      .poll_timeout_ms = PCSC_FIDO_UHID_POLL_TIMEOUT_MS,
   };
   int status = 0;
   pcsc_fido_daemon_pending_request_reset(&pending);
   if (!pcsc_fido_daemon_create_uhid_device(uhid_fd)) {
-    perror("UHID_CREATE2");
+    pcsc_fido_log(PCSC_FIDO_LOG_ERROR, "%s: %s", "UHID_CREATE2",
+                  strerror(errno));
     return 1;
   }
   request_ctx.fd = uhid_fd;
   request_ctx.assigned_cid = &assigned_cid;
-  pcsc_fido_log(PCSC_FIDO_LOG_INFO, "virtual FIDO HID bridge ready; tap NFC key on browser prompt");
+  pcsc_fido_log(PCSC_FIDO_LOG_INFO,
+                "virtual FIDO HID bridge ready; tap NFC key on browser prompt");
   while (!pcsc_fido_daemon_stop_requested()) {
-    int rv = pcsc_fido_daemon_poll_uhid_event(&poll_ctx, &pending, &request_ctx);
+    int rv =
+        pcsc_fido_daemon_poll_uhid_event(&poll_ctx, &pending, &request_ctx);
     if (rv < 0) {
       status = 1;
       break;
@@ -149,6 +161,7 @@ int pcsc_fido_daemon_run_always_mode(int uhid_fd) {
       break;
     }
   }
+  pcsc_fido_daemon_pending_request_reset(&pending);
   pcsc_fido_daemon_destroy_uhid_device(uhid_fd);
   return status;
 }

@@ -28,7 +28,7 @@ Use one install path only:
 
 ## Release packages vs source install
 
-Install is equivalent (same CMake files and `packaging/scripts/postinst`); uninstall is not — use `dnf remove` / `apt remove` for packages and `sudo make uninstall` only for source installs (which also deletes the `pcsc-fido` user and the entire `/etc/systemd/system/pcsc-fido.service.d/` drop-in directory, including custom overrides). Do not mix both paths under `/usr`.
+Install is equivalent (same CMake files and `packaging/scripts/postinst`); uninstall is not -- use `dnf remove` / `apt remove` for packages and `sudo make uninstall` only for source installs (which also deletes the `pcsc-fido` user and the entire `/etc/systemd/system/pcsc-fido.service.d/` drop-in directory, including custom overrides). Do not mix both paths under `/usr`.
 
 ## 1. Release package install
 
@@ -79,7 +79,7 @@ After upgrading an already-enabled install, restart **`pcsc-fido.service`** so t
 
 ### Uninstall release packages
 
-Use the distro package manager — not **`sudo make uninstall`** (see [Release packages vs source install](#release-packages-vs-source-install)):
+Use the distro package manager -- not **`sudo make uninstall`** (see [Release packages vs source install](#release-packages-vs-source-install)):
 
 ```bash
 # Fedora/RHEL
@@ -151,7 +151,7 @@ Release binaries compile out **`PCSC_FIDO_DEBUG`**. **`install-debug`** writes *
 
 ### Uninstall source builds
 
-Use this only for source installs (stricter than `dnf`/`apt remove` — see [Release packages vs source install](#release-packages-vs-source-install)):
+Use this only for source installs (stricter than `dnf`/`apt remove` -- see [Release packages vs source install](#release-packages-vs-source-install)):
 
 ```bash
 sudo make uninstall INSTALL_PREFIX=/usr
@@ -163,7 +163,7 @@ Do not mix a release package and a source install under the same prefix.
 
 ## Configuration
 
-Optional overrides under **`/etc/systemd/system/pcsc-fido.service.d/`** (not shipped in the package — only from **`systemctl edit`** or **`install-debug`**):
+Optional overrides under **`/etc/systemd/system/pcsc-fido.service.d/`** (not shipped in the package -- only from **`systemctl edit`** or **`install-debug`**):
 
 ```bash
 sudo systemctl edit pcsc-fido.service
@@ -189,11 +189,11 @@ Common environment variables:
 | -------- | ------- |
 | `PCSC_FIDO_READER` | Case-insensitive PC/SC reader substring when auto-selection is not desired. |
 | `PCSC_FIDO_VIRTUAL_KEY` | `tap-arm` default virtual key or `always` legacy visible mode. |
-| `PCSC_FIDO_ARM_SEC` | Tap-arm virtual-key window (seconds); default `60`; valid `1`–`86400` (`0` rejected; invalid/oob → default). Does **not** change the fixed 60s PC/SC card-wait timeout. |
+| `PCSC_FIDO_ARM_SEC` | Tap-arm virtual-key window (seconds); default `60`; valid `1`-`86400` (`0` rejected; invalid/oob -> default). Does **not** change the fixed 60s PC/SC card-wait timeout. |
 | `PCSC_FIDO_RATE_LIMIT` | Set to `0` to disable CTAPHID/PCSC rate limiting for diagnostics only. |
-| `PCSC_FIDO_RATE_WINDOW_SEC` | Rolling rate-limit window (seconds); default `90`; valid `1`–`1000000` (invalid/`0`/oob → default). |
-| `PCSC_FIDO_RATE_CTAPHID` | CTAPHID frame budget per window; default `30`; valid `1`–`1000000` (invalid/`0`/oob → default). |
-| `PCSC_FIDO_RATE_EXCHANGE` | PC/SC exchange budget per window; default `10`; valid `1`–`1000000` (invalid/`0`/oob → default). |
+| `PCSC_FIDO_RATE_WINDOW_SEC` | Rolling rate-limit window (seconds); default `90`; valid `1`-`1000000` (invalid/`0`/oob -> default). |
+| `PCSC_FIDO_RATE_CTAPHID` | CTAPHID frame budget per window; default `30`; valid `1`-`1000000` (invalid/`0`/oob -> default). |
+| `PCSC_FIDO_RATE_EXCHANGE` | PC/SC exchange budget per window; default `10`; valid `1`-`1000000` (invalid/`0`/oob -> default). |
 
 Reader selection is automatic when unambiguous: a single matching reader is used; a single contactless non-SAM slot may be auto-selected from a SAM/PICC pair; otherwise card-present readers win when several attached readers report cards, with a FIDO AID probe as the final tiebreaker. After a reader is chosen, the bridge **re-checks card presence** immediately before `SCardConnect`, and reuses an existing PC/SC session only after **`SCardStatus`** confirms the card is still in the field (see [REMEDIATIONS.md](docs/REMEDIATIONS.md#safeguards-for-pcsc-fido-nfc-specific)).
 
@@ -212,9 +212,7 @@ pcsc-fido --list-readers    # PC/SC readers visible to pcscd
 
 ```bash
 INSTALL_DEPS=1 make package    # CPack in build/ (TGZ; DEB/RPM when tools present)
-make ci-suite CI_SUITE_FLAGS=--release
-make ci-suite CI_SUITE_FLAGS="--release-arch riscv64"
+make ci-local CI_LOCAL_FLAGS=--release
+make ci-local CI_LOCAL_FLAGS="--release-arch riscv64"
 bash .github/scripts/run-local-release-packages.sh --all
 ```
-
-Last Updated: 2026-05-30

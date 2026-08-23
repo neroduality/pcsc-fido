@@ -17,50 +17,69 @@
 #include "pcsc_fido/request_assembly.h"
 
 #include "pcsc_fido/mem_util.h"
+#include "pcsc_fido/pcsc_bridge_limits.h"
 
 #include <string.h>
 
-void pcsc_fido_daemon_pending_request_reset(pcsc_fido_daemon_pending_request_t *pending) {
-  if (pending != nullptr) {
-    memset(pending, 0, sizeof(*pending));
+void pcsc_fido_daemon_pending_request_reset(
+    pcsc_fido_daemon_pending_request_t* pending) {
+  if (pending != PCSC_FIDO_NULL) {
+    /* The payload holds plaintext CTAP requests (clientDataHash and, for
+     * authenticatorClientPIN, encrypted-PIN / key-agreement material). Wipe
+     * with the guaranteed-erase helper so a hardened build's optimizer cannot
+     * elide the scrub, matching the treatment of the PC/SC APDU buffers. */
+    pcsc_fido_secure_clear(pending, sizeof(*pending));
   }
 }
 
-static void complete_request(pcsc_fido_daemon_pending_request_t *pending,
-                             pcsc_fido_daemon_request_handler_fn handle_request, const void *ctx) {
-  if (pending == nullptr || handle_request == nullptr) {
+static void complete_request(
+    pcsc_fido_daemon_pending_request_t* pending,
+    pcsc_fido_daemon_request_handler_fn_t handle_request, const void* ctx) {
+  if (pending == PCSC_FIDO_NULL || handle_request == PCSC_FIDO_NULL) {
     return;
   }
   pending->active = false;
-  handle_request(ctx, pending->cid, pending->cmd, pending->payload, pending->expected);
+  handle_request(ctx, pending->cid, pending->cmd, pending->payload,
+                 pending->expected);
+  /* Erase the assembled request as soon as it has been dispatched so plaintext
+   * CTAP payloads do not linger in the reassembly buffer between operations. */
+  pcsc_fido_daemon_pending_request_reset(pending);
 }
 
-bool pcsc_fido_daemon_request_assembler_feed(int fd, pcsc_fido_daemon_pending_request_t *pending,
-                                             const uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE],
-                                             pcsc_fido_daemon_request_handler_fn handle_request,
-                                             const void *ctx) {
+bool pcsc_fido_daemon_request_assembler_feed(
+    int fd, pcsc_fido_daemon_pending_request_t* pending,
+    const uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE],
+    pcsc_fido_daemon_request_handler_fn_t handle_request, const void* ctx) {
   uint32_t cid;
-  if (pending == nullptr || packet == nullptr || handle_request == nullptr) {
+  if (pending == PCSC_FIDO_NULL || packet == PCSC_FIDO_NULL ||
+      handle_request == PCSC_FIDO_NULL) {
     return false;
   }
   cid = pcsc_fido_daemon_hid_packet_cid(packet);
-  if ((packet[4] & 0x80u) != 0u) {
+  if ((packet[PCSC_FIDO_HID_OFF_CMD] & PCSC_FIDO_HID_TYPE_INIT) != 0u) {
     size_t copied;
     pending->active = false;
     pending->cid = cid;
-    pending->cmd = (uint8_t)(packet[4] & 0x7Fu);
-    pending->expected = (uint16_t)(((uint16_t)packet[5] << 8u) | packet[6]);
+    pending->cmd =
+        (uint8_t)(packet[PCSC_FIDO_HID_OFF_CMD] & PCSC_FIDO_HID_CMD_MASK);
+    pending->expected = (uint16_t)(((uint16_t)packet[PCSC_FIDO_HID_OFF_BCNTH]
+                                    << PCSC_FIDO_U16_HIGH_BYTE_SHIFT) |
+                                   packet[PCSC_FIDO_HID_OFF_BCNTL]);
     if (pending->expected > PCSC_FIDO_CTAPHID_MAX_FRAMED_PAYLOAD) {
       pending->active = false;
-      (void)pcsc_fido_daemon_send_hid_error(fd, cid, PCSC_FIDO_DAEMON_ERR_INVALID_LEN);
+      (void)pcsc_fido_daemon_send_hid_error(fd, cid,
+                                            PCSC_FIDO_DAEMON_ERR_INVALID_LEN);
       return true;
     }
-    copied = pending->expected < PCSC_FIDO_HID_INIT_PAYLOAD_MAX ? pending->expected
-                                                                : PCSC_FIDO_HID_INIT_PAYLOAD_MAX;
-    if (copied != 0u && !pcsc_fido_copy_bytes(pending->payload, sizeof(pending->payload), 0u,
-                                              packet + 7u, copied)) {
+    copied = pending->expected < PCSC_FIDO_HID_INIT_PAYLOAD_MAX
+                 ? pending->expected
+                 : PCSC_FIDO_HID_INIT_PAYLOAD_MAX;
+    if (copied != 0u &&
+        !pcsc_fido_copy_bytes(pending->payload, sizeof(pending->payload), 0u,
+                              packet + PCSC_FIDO_HID_OFF_INIT_DATA, copied)) {
       pending->active = false;
-      (void)pcsc_fido_daemon_send_hid_error(fd, cid, PCSC_FIDO_DAEMON_ERR_INVALID_LEN);
+      (void)pcsc_fido_daemon_send_hid_error(fd, cid,
+                                            PCSC_FIDO_DAEMON_ERR_INVALID_LEN);
       return true;
     }
     pending->copied = (uint16_t)copied;
@@ -72,25 +91,31 @@ bool pcsc_fido_daemon_request_assembler_feed(int fd, pcsc_fido_daemon_pending_re
     }
     return true;
   }
-  if (!pending->active || cid != pending->cid || packet[4] != pending->next_seq) {
-    (void)pcsc_fido_daemon_send_hid_error(fd, cid, PCSC_FIDO_DAEMON_ERR_INVALID_SEQ);
+  if (!pending->active || cid != pending->cid ||
+      packet[PCSC_FIDO_HID_OFF_CMD] != pending->next_seq) {
+    (void)pcsc_fido_daemon_send_hid_error(fd, cid,
+                                          PCSC_FIDO_DAEMON_ERR_INVALID_SEQ);
     pending->active = false;
     return true;
   }
   {
     const size_t remaining = (size_t)pending->expected - pending->copied;
-    const size_t chunk =
-      remaining < PCSC_FIDO_HID_CONT_PAYLOAD_MAX ? remaining : PCSC_FIDO_HID_CONT_PAYLOAD_MAX;
+    const size_t chunk = remaining < PCSC_FIDO_HID_CONT_PAYLOAD_MAX
+                             ? remaining
+                             : PCSC_FIDO_HID_CONT_PAYLOAD_MAX;
     uint16_t updated = 0u;
-    if (!pcsc_fido_copy_bytes(pending->payload, sizeof(pending->payload), pending->copied,
-                              packet + 5u, chunk)) {
+    if (!pcsc_fido_copy_bytes(pending->payload, sizeof(pending->payload),
+                              pending->copied,
+                              packet + PCSC_FIDO_HID_OFF_CONT_DATA, chunk)) {
       pending->active = false;
-      (void)pcsc_fido_daemon_send_hid_error(fd, cid, PCSC_FIDO_DAEMON_ERR_INVALID_LEN);
+      (void)pcsc_fido_daemon_send_hid_error(fd, cid,
+                                            PCSC_FIDO_DAEMON_ERR_INVALID_LEN);
       return true;
     }
     if (!pcsc_fido_try_add_u16(pending->copied, (uint16_t)chunk, &updated)) {
       pending->active = false;
-      (void)pcsc_fido_daemon_send_hid_error(fd, cid, PCSC_FIDO_DAEMON_ERR_INVALID_LEN);
+      (void)pcsc_fido_daemon_send_hid_error(fd, cid,
+                                            PCSC_FIDO_DAEMON_ERR_INVALID_LEN);
       return true;
     }
     pending->copied = updated;

@@ -22,8 +22,19 @@
 
 #define PCSC_FIDO_ERR_MSG_CANCELLED "cancelled"
 #define PCSC_FIDO_ERR_MSG_RATE_LIMIT "PC/SC exchange rate limit exceeded"
-#define PCSC_FIDO_ERR_MSG_CANCELLED_CARD_WAIT "cancelled while waiting for FIDO NFC card"
+#define PCSC_FIDO_ERR_MSG_CANCELLED_CARD_WAIT \
+  "cancelled while waiting for FIDO NFC card"
 
-void pcsc_fido_set_err(char *err, size_t err_cap, const char *msg);
-void pcsc_fido_set_pcsc_err(char *err, size_t err_cap, const char *stage, long rv);
-PCSC_FIDO_NODISCARD bool pcsc_fido_format_err(char *err, size_t err_cap, const char *fmt, ...);
+enum {
+  // 1-based argument indices for the printf format attribute below.
+  PCSC_FIDO_FORMAT_ERR_FMT_ARG_INDEX = 3,
+  PCSC_FIDO_FORMAT_ERR_VARARGS_INDEX = 4,
+};
+
+void pcsc_fido_set_err(char* err, size_t err_cap, const char* msg);
+void pcsc_fido_set_pcsc_err(char* err, size_t err_cap, const char* stage,
+                            long rv);
+PCSC_FIDO_NODISCARD bool pcsc_fido_format_err(char* err, size_t err_cap,
+                                              const char* fmt, ...)
+    __attribute__((format(printf, PCSC_FIDO_FORMAT_ERR_FMT_ARG_INDEX,
+                          PCSC_FIDO_FORMAT_ERR_VARARGS_INDEX)));

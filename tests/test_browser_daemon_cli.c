@@ -14,22 +14,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#define _POSIX_C_SOURCE 200809L
-
+#include "test_caps.h"
 #include <stdlib.h>
 
 #include "pcsc_fido/browser_daemon.h"
+#include "pcsc_fido/pcsc_fido_null.h"
 
 #include "mock_pcsc.h"
 
 #include <stdio.h>
 #include <string.h>
+#include "pcsc_fido/pcsc_log.h"
 
 static int failures;
 
-static void expect_true(int condition, const char *message) {
+static void expect_true(int condition, const char* message) {
   if (!condition) {
-    fprintf(stderr, "FAIL: %s\n", message);
+    pcsc_fido_log(PCSC_FIDO_LOG_ERROR, "FAIL: %s", message);
     failures++;
   }
 }
@@ -45,26 +46,38 @@ int main(void) {
   char version1[] = "--version";
   char config0[] = "pcsc-fido";
   char config1[] = "--print-config";
-  char *help_ptrs[] = {help0, help1, nullptr};
-  char *bad_ptrs[] = {bad0, bad1, nullptr};
-  char *list_ptrs[] = {list0, list1, nullptr};
-  char *version_ptrs[] = {version0, version1, nullptr};
-  char *config_ptrs[] = {config0, config1, nullptr};
+  char* help_ptrs[] = {help0, help1, PCSC_FIDO_NULL};
+  char* bad_ptrs[] = {bad0, bad1, PCSC_FIDO_NULL};
+  char* list_ptrs[] = {list0, list1, PCSC_FIDO_NULL};
+  char* version_ptrs[] = {version0, version1, PCSC_FIDO_NULL};
+  char* config_ptrs[] = {config0, config1, PCSC_FIDO_NULL};
 
-  expect_true(pcsc_fido_browser_daemon_main(2, help_ptrs) == 0, "--help exits zero");
-  expect_true(pcsc_fido_browser_daemon_main(2, bad_ptrs) == 2, "unknown flag exits 2");
-  expect_true(pcsc_fido_browser_daemon_main(2, version_ptrs) == 0, "--version exits zero");
+  expect_true(
+      pcsc_fido_browser_daemon_main(TEST_SOCKETPAIR_FDS, help_ptrs) == 0,
+      "--help exits zero");
+  expect_true(pcsc_fido_browser_daemon_main(TEST_SOCKETPAIR_FDS, bad_ptrs) ==
+                  TEST_SOCKETPAIR_FDS,
+              "unknown flag exits 2");
+  expect_true(
+      pcsc_fido_browser_daemon_main(TEST_SOCKETPAIR_FDS, version_ptrs) == 0,
+      "--version exits zero");
 
   mock_pcsc_reset();
   mock_pcsc_set_readers("CLI Test Reader 00 00\0\0");
-  expect_true(pcsc_fido_browser_daemon_main(2, list_ptrs) == 0, "--list-readers succeeds");
+  expect_true(
+      pcsc_fido_browser_daemon_main(TEST_SOCKETPAIR_FDS, list_ptrs) == 0,
+      "--list-readers succeeds");
 
   mock_pcsc_reset();
   mock_pcsc_set_establish_fail(SCARD_F_INTERNAL_ERROR);
-  expect_true(pcsc_fido_browser_daemon_main(2, list_ptrs) == 1, "--list-readers failure");
+  expect_true(
+      pcsc_fido_browser_daemon_main(TEST_SOCKETPAIR_FDS, list_ptrs) == 1,
+      "--list-readers failure");
 
   expect_true(setenv("PCSC_FIDO_ARM_SEC", "45", 1) == 0, "set arm sec");
-  expect_true(pcsc_fido_browser_daemon_main(2, config_ptrs) == 0, "--print-config succeeds");
+  expect_true(
+      pcsc_fido_browser_daemon_main(TEST_SOCKETPAIR_FDS, config_ptrs) == 0,
+      "--print-config succeeds");
 
   return failures == 0 ? 0 : 1;
 }

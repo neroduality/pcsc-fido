@@ -26,12 +26,25 @@ source "${script_dir}/helper-build-tree-ownership.sh"
 source "${script_dir}/helper-container-bind-mount.sh"
 
 pcsc_fido_refuse_root_make
-pcsc_fido_repair_tree_ownership "$@"
 
-# Container CI can leave root-owned bind mounts; plain chown fails without sudo.
-for rel in "${_PCSC_FIDO_BIND_MOUNT_RESTORE_PATHS[@]}"; do
-  target="${repo_root}/${rel}"
-  if [[ -e ${target} ]] && [[ $(stat -c '%u' "${target}") -eq 0 ]]; then
-    bash "${script_dir}/helper-restore-bind-mount-ownership.sh" "${rel}"
+# Resolve relative BUILD_TREES args against the repo root before repair.
+repair_paths=()
+for path in "$@"; do
+  if [[ ${path} == /* ]]; then
+    repair_paths+=("${path}")
+  else
+    repair_paths+=("${repo_root}/${path}")
   fi
 done
+
+# Quiet restore for nested root leftovers (no "repairing" spam); host chown first.
+for rel in "${_PCSC_FIDO_BIND_MOUNT_RESTORE_PATHS[@]}"; do
+  target="${repo_root}/${rel}"
+  if [[ -e ${target} ]] && pcsc_fido_tree_has_root_owned "${target}"; then
+    if ! chown -R "$(id -u):$(id -g)" "${target}" 2>/dev/null; then
+      bash "${script_dir}/helper-restore-bind-mount-ownership.sh" "${rel}" >/dev/null 2>&1 || true
+    fi
+  fi
+done
+
+pcsc_fido_repair_tree_ownership "${repair_paths[@]}"

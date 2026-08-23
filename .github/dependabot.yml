@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Dependabot version updates (yearly cadence — 1st of January).
+# Dependabot version updates (yearly cadence -- 1st of January).
 # https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
 
 version: 2

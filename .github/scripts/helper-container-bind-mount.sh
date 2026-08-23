@@ -25,11 +25,40 @@ fi
 
 _PCSC_FIDO_BIND_MOUNT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Relative repo paths root may touch during bind-mounted local container CI.
+# Relative repo paths bind-mounted local container CI may write (restored on exit).
 _PCSC_FIDO_BIND_MOUNT_RESTORE_PATHS=(
+  .lint-kit-org
   build
-  scan-build-report
   dist
+  scan-build-report
+  .github/pinned/markdownlint/node_modules
+)
+
+# Subtrees created before drop so host UID owns them from the first write.
+# mkdir -p as root leaves intermediate dirs (e.g. build/lint) root-owned; always
+# chown the top-level trees below after all mkdirs -- never only the leaf path.
+_PCSC_FIDO_BIND_MOUNT_PREPARE_PATHS=(
+  .lint-kit-org
+  build
+  build/lint
+  build/clang-tidy-compile-db
+  build/ci
+  build/unit
+  build/codeql
+  build/codeql-cli
+  build/codeql-cmake
+  build/codeql-local-work
+  dist
+  scan-build-report
+  .github/pinned/markdownlint/node_modules
+)
+
+# Top-level bind-mount trees to chown -R after prepare mkdirs (covers intermediates).
+_PCSC_FIDO_BIND_MOUNT_CHOWN_ROOTS=(
+  .lint-kit-org
+  build
+  dist
+  scan-build-report
   .github/pinned/markdownlint/node_modules
 )
 
@@ -77,10 +106,13 @@ pcsc_fido_prepare_bind_mount_paths() {
   local uid="${HOST_UID}"
   local gid="${HOST_GID:-${uid}}"
   local rel
-  mkdir -p "${repo_root}/dist" "${repo_root}/build"
-  for rel in dist build .github/pinned/markdownlint/node_modules; do
-    if [[ -e "${repo_root}/${rel}" ]]; then
-      chown -R "${uid}:${gid}" "${repo_root}/${rel}" 2>/dev/null || true
+  for rel in "${_PCSC_FIDO_BIND_MOUNT_PREPARE_PATHS[@]}"; do
+    mkdir -p "${repo_root}/${rel}"
+  done
+  # Chown top-level trees only after every mkdir -p so intermediates are not left root-owned.
+  for rel in "${_PCSC_FIDO_BIND_MOUNT_CHOWN_ROOTS[@]}"; do
+    if [[ -e ${repo_root}/${rel} ]]; then
+      chown -R "${uid}:${gid}" "${repo_root}/${rel}"
     fi
   done
 }
@@ -123,13 +155,29 @@ pcsc_fido_drop_to_host_user() {
     return 1
   fi
   pcsc_fido_ensure_host_user
-  exec runuser -u pcsc_fido_ci -- env \
-    PCSC_FIDO_CI_AS_USER=1 \
-    AUTO_INSTALL_LINUX_DEPS=0 \
-    HOST_UID="${HOST_UID}" \
-    HOST_GID="${HOST_GID:-${HOST_UID}}" \
-    HOME="${PCSC_FIDO_CI_HOME:-/tmp/pcsc-fido-ci}" \
-    "$@"
+  local -a drop_env=(
+    PCSC_FIDO_CI_AS_USER=1
+    AUTO_INSTALL_LINUX_DEPS=0
+    INSTALL_DEPS=0
+    HOST_UID="${HOST_UID}"
+    HOST_GID="${HOST_GID:-${HOST_UID}}"
+    HOME="${PCSC_FIDO_CI_HOME:-/tmp/pcsc-fido-ci}"
+  )
+  if [[ -n ${PCSC_FIDO_ROOT:-} ]]; then
+    drop_env+=(PCSC_FIDO_ROOT="${PCSC_FIDO_ROOT}")
+  fi
+  if [[ -n ${LINT_KIT:-} ]]; then
+    drop_env+=(LINT_KIT="${LINT_KIT}")
+  fi
+  if [[ -n ${PCSC_FIDO_DEPS_SCOPE:-} ]]; then
+    drop_env+=(PCSC_FIDO_DEPS_SCOPE="${PCSC_FIDO_DEPS_SCOPE}")
+  fi
+  # Forward CodeQL local/CI knobs into the dropped-user re-exec.
+  local _k
+  for _k in $(compgen -e CODEQL_ || true); do
+    drop_env+=("${_k}=${!_k}")
+  done
+  exec runuser -u pcsc_fido_ci -- env "${drop_env[@]}" "$@"
 }
 
 # After pcsc_fido_drop_to_host_user in bind-mounted local CI: abort if still root.
@@ -170,7 +218,7 @@ pcsc_fido_run_bind_mount_container() {
         break
         ;;
       *)
-        printf 'error: pcsc_fido_run_bind_mount_container: unexpected argument %q (use --restore … -- docker-args…)\n' \
+        printf 'error: pcsc_fido_run_bind_mount_container: unexpected argument %q (use --restore ... -- docker-args...)\n' \
           "$1" >&2
         return 2
         ;;
@@ -185,10 +233,10 @@ pcsc_fido_run_bind_mount_container() {
     return 2
   fi
 
-  local restore_done=0
+  _PCSC_FIDO_BIND_MOUNT_RESTORE_DONE=0
   _pcsc_fido_restore_bind_mount_on_exit() {
-    if [[ ${restore_done} -eq 0 ]]; then
-      restore_done=1
+    if [[ ${_PCSC_FIDO_BIND_MOUNT_RESTORE_DONE:-0} -eq 0 ]]; then
+      _PCSC_FIDO_BIND_MOUNT_RESTORE_DONE=1
       pcsc_fido_restore_bind_mount_ownership "${restore_paths[@]}"
     fi
   }
@@ -197,7 +245,7 @@ pcsc_fido_run_bind_mount_container() {
   "${engine}" run --rm "${docker_args[@]}"
   local ec=$?
 
-  restore_done=1
+  _PCSC_FIDO_BIND_MOUNT_RESTORE_DONE=1
   trap - EXIT
   pcsc_fido_restore_bind_mount_ownership "${restore_paths[@]}"
   return "${ec}"
@@ -238,5 +286,6 @@ pcsc_fido_ci_platform_docker_args() {
 # Populate the PLATFORM_ARGS bash array for docker/podman run.
 pcsc_fido_load_ci_platform_args() {
   PLATFORM_ARGS=()
+  # shellcheck disable=SC2034 # PLATFORM_ARGS is a return-via-global consumed by callers.
   mapfile -t PLATFORM_ARGS < <(pcsc_fido_ci_platform_docker_args)
 }

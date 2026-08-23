@@ -14,13 +14,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# SBOM generation (Syft) + vulnerability scan (Grype on SBOM); SARIF → Code Scanning.
+# SBOM generation (Syft) + vulnerability scan (Grype on SBOM); SARIF -> Code Scanning.
 # Runs on schedule only (plus workflow_dispatch). Local: .github/scripts/run-local-supply-chain.sh
 name: Supply chain (Syft + Grype)
 
 on:
   schedule:
-    # Quarterly — 1st of Jan/Apr/Jul/Oct at 22:18 UTC.
+    # Quarterly -- 1st of Jan/Apr/Jul/Oct at 22:18 UTC.
     - cron: "18 22 1 1,4,7,10 *"
   workflow_dispatch:
 
@@ -69,7 +69,7 @@ jobs:
           severity-cutoff: high
 
       - name: Upload Grype SARIF to code scanning
-        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
+        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
         if: success() || failure()
         continue-on-error: true
         with:

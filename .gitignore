@@ -11,8 +11,6 @@ __pycache__/
 !.git
 !.gitignore
 !.github/
-!.github/linters/.clang-format
-!.github/linters/.markdownlint.json
 !.syft.yaml
 
 *.o

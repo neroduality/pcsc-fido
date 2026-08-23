@@ -15,82 +15,109 @@
 // limitations under the License.
 
 #include "pcsc_fido/ctaphid.h"
+#include "pcsc_fido/pcsc_bridge_limits.h"
 
 #include "pcsc_fido/mem_util.h"
 
 #include <string.h>
 
 static void put_cid(uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE], uint32_t cid) {
-  packet[0] = (uint8_t)((cid >> 24u) & 0xFFu);
-  packet[1] = (uint8_t)((cid >> 16u) & 0xFFu);
-  packet[2] = (uint8_t)((cid >> 8u) & 0xFFu);
-  packet[3] = (uint8_t)(cid & 0xFFu);
+  packet[PCSC_FIDO_HID_OFF_CID_B0] =
+      (uint8_t)((cid >> PCSC_FIDO_U32_SHIFT_BYTE3) & PCSC_FIDO_BYTE_MASK);
+  packet[PCSC_FIDO_HID_OFF_CID_B1] =
+      (uint8_t)((cid >> PCSC_FIDO_U32_SHIFT_BYTE2) & PCSC_FIDO_BYTE_MASK);
+  packet[PCSC_FIDO_HID_OFF_CID_B2] =
+      (uint8_t)((cid >> PCSC_FIDO_U32_SHIFT_BYTE1) & PCSC_FIDO_BYTE_MASK);
+  packet[PCSC_FIDO_HID_OFF_CID_B3] = (uint8_t)(cid & PCSC_FIDO_BYTE_MASK);
 }
 
 static uint32_t get_cid(const uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE]) {
-  return ((uint32_t)packet[0] << 24u) | ((uint32_t)packet[1] << 16u) | ((uint32_t)packet[2] << 8u) |
-         packet[3];
+  return ((uint32_t)packet[PCSC_FIDO_HID_OFF_CID_B0]
+          << PCSC_FIDO_U32_SHIFT_BYTE3) |
+         ((uint32_t)packet[PCSC_FIDO_HID_OFF_CID_B1]
+          << PCSC_FIDO_U32_SHIFT_BYTE2) |
+         ((uint32_t)packet[PCSC_FIDO_HID_OFF_CID_B2]
+          << PCSC_FIDO_U32_SHIFT_BYTE1) |
+         packet[PCSC_FIDO_HID_OFF_CID_B3];
 }
 
-bool pcsc_fido_hid_encode_init_packet(uint32_t cid, uint8_t cmd, const uint8_t *payload,
-                                      size_t payload_len, uint8_t packet[64]) {
-  if (packet == nullptr || payload_len > PCSC_FIDO_HID_INIT_PAYLOAD_MAX ||
-      (payload == nullptr && payload_len != 0u)) {
+bool pcsc_fido_hid_encode_init_packet(
+    uint32_t cid, uint8_t cmd, const uint8_t* payload, size_t payload_len,
+    uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE]) {
+  if (packet == PCSC_FIDO_NULL ||
+      payload_len > PCSC_FIDO_HID_INIT_PAYLOAD_MAX ||
+      (payload == PCSC_FIDO_NULL && payload_len != 0u)) {
     return false;
   }
-  memset(packet, 0, PCSC_FIDO_HID_PACKET_SIZE);
+  pcsc_fido_zero_bytes(packet, PCSC_FIDO_HID_PACKET_SIZE);
   put_cid(packet, cid);
-  packet[4] = (uint8_t)(0x80u | cmd);
-  packet[5] = (uint8_t)((payload_len >> 8u) & 0xFFu);
-  packet[6] = (uint8_t)(payload_len & 0xFFu);
+  packet[PCSC_FIDO_HID_OFF_CMD] = (uint8_t)(PCSC_FIDO_HID_TYPE_INIT | cmd);
+  packet[PCSC_FIDO_HID_OFF_BCNTH] =
+      (uint8_t)((payload_len >> PCSC_FIDO_U16_HIGH_BYTE_SHIFT) &
+                PCSC_FIDO_BYTE_MASK);
+  packet[PCSC_FIDO_HID_OFF_BCNTL] =
+      (uint8_t)(payload_len & PCSC_FIDO_BYTE_MASK);
   if (payload_len != 0u &&
-      !pcsc_fido_copy_bytes(packet, PCSC_FIDO_HID_PACKET_SIZE, 7u, payload, payload_len)) {
+      !pcsc_fido_copy_bytes(packet, PCSC_FIDO_HID_PACKET_SIZE,
+                            PCSC_FIDO_HID_OFF_INIT_DATA, payload,
+                            payload_len)) {
     return false;
   }
   return true;
 }
 
-bool pcsc_fido_hid_encode_cont_packet(uint32_t cid, uint8_t seq, const uint8_t *payload,
-                                      size_t payload_len, uint8_t packet[64]) {
-  if (packet == nullptr || seq > 0x7Fu || payload_len > PCSC_FIDO_HID_CONT_PAYLOAD_MAX ||
-      (payload == nullptr && payload_len != 0u)) {
+bool pcsc_fido_hid_encode_cont_packet(
+    uint32_t cid, uint8_t seq, const uint8_t* payload, size_t payload_len,
+    uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE]) {
+  if (packet == PCSC_FIDO_NULL || seq > PCSC_FIDO_HID_SEQ_MAX ||
+      payload_len > PCSC_FIDO_HID_CONT_PAYLOAD_MAX ||
+      (payload == PCSC_FIDO_NULL && payload_len != 0u)) {
     return false;
   }
-  memset(packet, 0, PCSC_FIDO_HID_PACKET_SIZE);
+  pcsc_fido_zero_bytes(packet, PCSC_FIDO_HID_PACKET_SIZE);
   put_cid(packet, cid);
-  packet[4] = seq;
+  packet[PCSC_FIDO_HID_OFF_CMD] = seq;
   if (payload_len != 0u &&
-      !pcsc_fido_copy_bytes(packet, PCSC_FIDO_HID_PACKET_SIZE, 5u, payload, payload_len)) {
+      !pcsc_fido_copy_bytes(packet, PCSC_FIDO_HID_PACKET_SIZE,
+                            PCSC_FIDO_HID_OFF_CONT_DATA, payload,
+                            payload_len)) {
     return false;
   }
   return true;
 }
 
-bool pcsc_fido_hid_decode_init_header(const uint8_t packet[64], uint32_t *cid, uint8_t *cmd,
-                                      size_t *payload_len) {
-  if (packet == nullptr || cid == nullptr || cmd == nullptr || payload_len == nullptr ||
-      (packet[4] & 0x80u) == 0u) {
+bool pcsc_fido_hid_decode_init_header(
+    const uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE], uint32_t* cid,
+    uint8_t* cmd, size_t* payload_len) {
+  if (packet == PCSC_FIDO_NULL || cid == PCSC_FIDO_NULL ||
+      cmd == PCSC_FIDO_NULL || payload_len == PCSC_FIDO_NULL ||
+      (packet[PCSC_FIDO_HID_OFF_CMD] & PCSC_FIDO_HID_TYPE_INIT) == 0u) {
     return false;
   }
   *cid = get_cid(packet);
-  *cmd = (uint8_t)(packet[4] & 0x7Fu);
-  *payload_len = ((size_t)packet[5] << 8u) | packet[6];
+  *cmd = (uint8_t)(packet[PCSC_FIDO_HID_OFF_CMD] & PCSC_FIDO_HID_CMD_MASK);
+  *payload_len = ((size_t)packet[PCSC_FIDO_HID_OFF_BCNTH]
+                  << PCSC_FIDO_U16_HIGH_BYTE_SHIFT) |
+                 packet[PCSC_FIDO_HID_OFF_BCNTL];
   return true;
 }
 
-static bool exchange_init(pcsc_fido_hid_io_t *io, uint32_t *cid, int timeout_ms) {
-  static const uint8_t nonce[8] = {'N', 'E', 'R', 'O', 'F', 'I', 'D', 'O'};
+static bool exchange_init(pcsc_fido_hid_io_t* io, uint32_t* cid,
+                          int timeout_ms) {
+  static const uint8_t NONCE[PCSC_FIDO_HID_INIT_NONCE_LEN] = {
+      'N', 'E', 'R', 'O', 'F', 'I', 'D', 'O'};
   uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE];
   uint8_t response[PCSC_FIDO_HID_PACKET_SIZE];
   uint32_t response_cid;
   uint8_t cmd;
   size_t len;
 
-  if (io == nullptr || cid == nullptr) {
+  if (io == PCSC_FIDO_NULL || cid == PCSC_FIDO_NULL) {
     return false;
   }
-  if (!pcsc_fido_hid_encode_init_packet(PCSC_FIDO_HID_BROADCAST_CID, PCSC_FIDO_HID_CMD_INIT, nonce,
-                                        sizeof(nonce), packet)) {
+  if (!pcsc_fido_hid_encode_init_packet(PCSC_FIDO_HID_BROADCAST_CID,
+                                        PCSC_FIDO_HID_CMD_INIT, NONCE,
+                                        sizeof(NONCE), packet)) {
     return false;
   }
   if (io->write_packet(io->ctx, packet, sizeof(packet)) != 0 ||
@@ -98,43 +125,61 @@ static bool exchange_init(pcsc_fido_hid_io_t *io, uint32_t *cid, int timeout_ms)
       !pcsc_fido_hid_decode_init_header(response, &response_cid, &cmd, &len)) {
     return false;
   }
-  if (response_cid != PCSC_FIDO_HID_BROADCAST_CID || cmd != PCSC_FIDO_HID_CMD_INIT || len < 17u ||
-      memcmp(response + 7u, nonce, sizeof(nonce)) != 0) {
+  if (response_cid != PCSC_FIDO_HID_BROADCAST_CID ||
+      cmd != PCSC_FIDO_HID_CMD_INIT || len < PCSC_FIDO_HID_INIT_RESP_MIN_LEN ||
+      memcmp(response + PCSC_FIDO_HID_OFF_INIT_DATA, NONCE, sizeof(NONCE)) !=
+          0) {
     return false;
   }
-  *cid = ((uint32_t)response[15] << 24u) | ((uint32_t)response[16] << 16u) |
-         ((uint32_t)response[17] << 8u) | response[18];
+  *cid =
+      ((uint32_t)
+           response[PCSC_FIDO_HID_INIT_RESP_CID_OFF + PCSC_FIDO_HID_OFF_CID_B0]
+       << PCSC_FIDO_U32_SHIFT_BYTE3) |
+      ((uint32_t)
+           response[PCSC_FIDO_HID_INIT_RESP_CID_OFF + PCSC_FIDO_HID_OFF_CID_B1]
+       << PCSC_FIDO_U32_SHIFT_BYTE2) |
+      ((uint32_t)
+           response[PCSC_FIDO_HID_INIT_RESP_CID_OFF + PCSC_FIDO_HID_OFF_CID_B2]
+       << PCSC_FIDO_U32_SHIFT_BYTE1) |
+      response[PCSC_FIDO_HID_INIT_RESP_CID_OFF + PCSC_FIDO_HID_OFF_CID_B3];
   return *cid != 0u && *cid != PCSC_FIDO_HID_BROADCAST_CID;
 }
 
-static bool send_payload(pcsc_fido_hid_io_t *io, uint32_t cid, uint8_t hid_cmd,
-                         const uint8_t *payload, size_t payload_len) {
+static bool send_payload(pcsc_fido_hid_io_t* io, uint32_t cid, uint8_t hid_cmd,
+                         const uint8_t* payload, size_t payload_len) {
   uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE];
   size_t sent;
   uint8_t seq;
 
-  if (io == nullptr || (payload == nullptr && payload_len != 0u)) {
+  if (io == PCSC_FIDO_NULL ||
+      (payload == PCSC_FIDO_NULL && payload_len != 0u)) {
     return false;
   }
   if (payload_len > PCSC_FIDO_CTAPHID_MAX_FRAMED_PAYLOAD) {
     return false;
   }
-  sent =
-    payload_len < PCSC_FIDO_HID_INIT_PAYLOAD_MAX ? payload_len : PCSC_FIDO_HID_INIT_PAYLOAD_MAX;
+  sent = payload_len < PCSC_FIDO_HID_INIT_PAYLOAD_MAX
+             ? payload_len
+             : PCSC_FIDO_HID_INIT_PAYLOAD_MAX;
   if (!pcsc_fido_hid_encode_init_packet(cid, hid_cmd, payload, sent, packet)) {
     return false;
   }
-  packet[5] = (uint8_t)((payload_len >> 8u) & 0xFFu);
-  packet[6] = (uint8_t)(payload_len & 0xFFu);
+  packet[PCSC_FIDO_HID_OFF_BCNTH] =
+      (uint8_t)((payload_len >> PCSC_FIDO_U16_HIGH_BYTE_SHIFT) &
+                PCSC_FIDO_BYTE_MASK);
+  packet[PCSC_FIDO_HID_OFF_BCNTL] =
+      (uint8_t)(payload_len & PCSC_FIDO_BYTE_MASK);
   if (io->write_packet(io->ctx, packet, sizeof(packet)) != 0) {
     return false;
   }
   seq = 0u;
   while (sent < payload_len) {
     const size_t remaining = payload_len - sent;
-    const size_t chunk =
-      remaining < PCSC_FIDO_HID_CONT_PAYLOAD_MAX ? remaining : PCSC_FIDO_HID_CONT_PAYLOAD_MAX;
-    if (!pcsc_fido_hid_encode_cont_packet(cid, seq, payload + sent, chunk, packet)) {
+    const size_t chunk = remaining < PCSC_FIDO_HID_CONT_PAYLOAD_MAX
+                             ? remaining
+                             : PCSC_FIDO_HID_CONT_PAYLOAD_MAX;
+    if (!pcsc_fido_hid_encode_cont_packet(cid, seq, payload + sent, chunk,
+                                          packet)) {
       return false;
     }
     if (io->write_packet(io->ctx, packet, sizeof(packet)) != 0) {
@@ -146,8 +191,9 @@ static bool send_payload(pcsc_fido_hid_io_t *io, uint32_t cid, uint8_t hid_cmd,
   return true;
 }
 
-static bool receive_payload(pcsc_fido_hid_io_t *io, uint32_t cid, uint8_t hid_cmd,
-                            uint8_t *response, size_t response_cap, size_t *response_len,
+static bool receive_payload(pcsc_fido_hid_io_t* io, uint32_t cid,
+                            uint8_t hid_cmd, uint8_t* response,
+                            size_t response_cap, size_t* response_len,
                             int timeout_ms) {
   uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE];
   uint32_t response_cid;
@@ -156,14 +202,16 @@ static bool receive_payload(pcsc_fido_hid_io_t *io, uint32_t cid, uint8_t hid_cm
   size_t expected;
   size_t copied;
 
-  if (io == nullptr || response == nullptr || response_len == nullptr) {
+  if (io == PCSC_FIDO_NULL || response == PCSC_FIDO_NULL ||
+      response_len == PCSC_FIDO_NULL) {
     return false;
   }
   for (;;) {
     if (io->read_packet(io->ctx, packet, sizeof(packet), timeout_ms) != 0) {
       return false;
     }
-    if (!pcsc_fido_hid_decode_init_header(packet, &response_cid, &cmd, &expected)) {
+    if (!pcsc_fido_hid_decode_init_header(packet, &response_cid, &cmd,
+                                          &expected)) {
       continue;
     }
     if (response_cid != cid) {
@@ -178,22 +226,27 @@ static bool receive_payload(pcsc_fido_hid_io_t *io, uint32_t cid, uint8_t hid_cm
       expected > response_cap) {
     return false;
   }
-  copied = expected < PCSC_FIDO_HID_INIT_PAYLOAD_MAX ? expected : PCSC_FIDO_HID_INIT_PAYLOAD_MAX;
-  if (copied != 0u && !pcsc_fido_copy_bytes(response, response_cap, 0u, packet + 7u, copied)) {
+  copied = expected < PCSC_FIDO_HID_INIT_PAYLOAD_MAX
+               ? expected
+               : PCSC_FIDO_HID_INIT_PAYLOAD_MAX;
+  if (copied != 0u &&
+      !pcsc_fido_copy_bytes(response, response_cap, 0u,
+                            packet + PCSC_FIDO_HID_OFF_INIT_DATA, copied)) {
     return false;
   }
   seq = 0u;
   while (copied < expected) {
     size_t chunk;
     if (io->read_packet(io->ctx, packet, sizeof(packet), timeout_ms) != 0 ||
-        get_cid(packet) != cid || packet[4] != seq) {
+        get_cid(packet) != cid || packet[PCSC_FIDO_HID_OFF_CMD] != seq) {
       return false;
     }
     chunk = expected - copied;
     if (chunk > PCSC_FIDO_HID_CONT_PAYLOAD_MAX) {
       chunk = PCSC_FIDO_HID_CONT_PAYLOAD_MAX;
     }
-    if (!pcsc_fido_copy_bytes(response, response_cap, copied, packet + 5u, chunk)) {
+    if (!pcsc_fido_copy_bytes(response, response_cap, copied,
+                              packet + PCSC_FIDO_HID_OFF_CONT_DATA, chunk)) {
       return false;
     }
     copied += chunk;
@@ -203,12 +256,15 @@ static bool receive_payload(pcsc_fido_hid_io_t *io, uint32_t cid, uint8_t hid_cm
   return true;
 }
 
-bool pcsc_fido_hid_exchange(pcsc_fido_hid_io_t *io, uint8_t hid_cmd, const uint8_t *payload,
-                            size_t payload_len, uint8_t *response, size_t response_cap,
-                            size_t *response_len, int timeout_ms) {
+bool pcsc_fido_hid_exchange(pcsc_fido_hid_io_t* io, uint8_t hid_cmd,
+                            const uint8_t* payload, size_t payload_len,
+                            uint8_t* response, size_t response_cap,
+                            size_t* response_len, int timeout_ms) {
   uint32_t cid;
-  if (io == nullptr || io->write_packet == nullptr || io->read_packet == nullptr ||
-      response == nullptr || response_len == nullptr || (payload == nullptr && payload_len != 0u)) {
+  if (io == PCSC_FIDO_NULL || io->write_packet == PCSC_FIDO_NULL ||
+      io->read_packet == PCSC_FIDO_NULL || response == PCSC_FIDO_NULL ||
+      response_len == PCSC_FIDO_NULL ||
+      (payload == PCSC_FIDO_NULL && payload_len != 0u)) {
     return false;
   }
   if (!exchange_init(io, &cid, timeout_ms)) {
@@ -217,5 +273,6 @@ bool pcsc_fido_hid_exchange(pcsc_fido_hid_io_t *io, uint8_t hid_cmd, const uint8
   if (!send_payload(io, cid, hid_cmd, payload, payload_len)) {
     return false;
   }
-  return receive_payload(io, cid, hid_cmd, response, response_cap, response_len, timeout_ms);
+  return receive_payload(io, cid, hid_cmd, response, response_cap, response_len,
+                         timeout_ms);
 }

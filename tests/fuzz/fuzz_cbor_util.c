@@ -19,15 +19,15 @@
 #include <stddef.h>
 #include <stdint.h>
 
-static const char k_cbor_keys[][11] = {"up", "uv", "rk", "clientPin"};
+static const char CBOR_KEYS[][11] = {"up", "uv", "rk", "clientPin"};
 
-int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
+int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   size_t off = 0u;
   size_t value = 0u;
   bool flag = false;
   bool matches = false;
 
-  if (data == nullptr) {
+  if (data == PCSC_FIDO_NULL) {
     return 0;
   }
 
@@ -40,9 +40,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   off = 0u;
   (void)pcsc_fido_cbor_read_bool_value(data, size, &off, &flag);
 
-  for (size_t i = 0u; i < sizeof(k_cbor_keys) / sizeof(k_cbor_keys[0]); i++) {
+  for (size_t i = 0u; i < sizeof(CBOR_KEYS) / sizeof(CBOR_KEYS[0]); i++) {
     off = 0u;
-    (void)pcsc_fido_cbor_read_text_key_matches(data, size, &off, k_cbor_keys[i], &matches);
+    (void)pcsc_fido_cbor_read_text_key_matches(data, size, &off, CBOR_KEYS[i],
+                                               &matches);
   }
 
   if (size > 0u) {

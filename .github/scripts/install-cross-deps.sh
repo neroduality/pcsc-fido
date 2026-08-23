@@ -18,7 +18,7 @@
 # Install Debian cross toolchains and target libpcsclite for pcsc-fido.
 #
 # Debian trixie hosts GCC 14+ cross toolchains for ISO C23 builds. Target libpcsclite
-# sysroots are extracted from trixie (matches Release / ci-suite cross containers).
+# sysroots are extracted from trixie (matches Release / ci-local cross containers).
 #
 # Usage:
 #   bash .github/scripts/install-cross-deps.sh [armhf|ppc64el|riscv64|s390x ...]
@@ -27,6 +27,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=helper-cross-targets.sh
+# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/helper-cross-targets.sh"
 
 if [[ "$(uname -s)" != "Linux" ]]; then
@@ -127,4 +128,4 @@ for arch in "${ARCHES[@]}"; do
   pcsc_fido_extract_pcsc_sysroot "$arch"
 done
 
-printf '── install-cross-deps: complete (%s) ──\n' "${ARCHES[*]}"
+printf -- '-- install-cross-deps: complete (%s) --\n' "${ARCHES[*]}"

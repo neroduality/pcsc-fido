@@ -17,8 +17,8 @@
 
 # Ensure the dedicated pcsc-fido system user exists before starting the service.
 # PC/SC client integration (optional host groups, polkit) lives here and in
-# packaging/polkit/ — not in SupplementaryGroups= or other pcsc-fido.service drop-ins.
-# Invoked from packaging/scripts/postinst at install time only — not ExecStartPre.
+# packaging/polkit/ -- not in SupplementaryGroups= or other pcsc-fido.service drop-ins.
+# Invoked from packaging/scripts/postinst at install time only -- not ExecStartPre.
 
 set -eu
 umask 077

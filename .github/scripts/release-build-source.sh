@@ -83,4 +83,4 @@ git -C "${ROOT}" archive \
   -o "${archive}" \
   "${TAG}"
 
-printf '── release-build-source: %s ──\n' "${archive}"
+printf -- '-- release-build-source: %s --\n' "${archive}"

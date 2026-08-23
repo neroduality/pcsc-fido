@@ -74,8 +74,8 @@ if (($# > 0)); then
   fi
 fi
 
-printf '\n── OSV-Scanner (%s) ──\n' "${OSV_IMAGE}"
-printf 'Repo mount: %s → /src\n\n' "${REPO_ROOT}"
+printf '\n-- OSV-Scanner (%s) --\n' "${OSV_IMAGE}"
+printf 'Repo mount: %s -> /src\n\n' "${REPO_ROOT}"
 
 exec "${ENGINE}" run --rm \
   "${PLATFORM_ARGS[@]}" \

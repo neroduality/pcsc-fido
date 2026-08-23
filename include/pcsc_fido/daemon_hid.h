@@ -23,12 +23,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
-uint32_t pcsc_fido_daemon_hid_packet_cid(const uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE]);
+uint32_t pcsc_fido_daemon_hid_packet_cid(
+    const uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE]);
 
-PCSC_FIDO_NODISCARD bool
-pcsc_fido_daemon_hid_is_cancel_packet(const uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE],
-                                      uint32_t cid);
+PCSC_FIDO_NODISCARD bool pcsc_fido_daemon_hid_is_cancel_packet(
+    const uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE], uint32_t cid);
 
-PCSC_FIDO_NODISCARD bool
-pcsc_fido_daemon_hid_decode_init_header(const uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE],
-                                        uint32_t *cid, uint8_t *cmd, size_t *payload_len);
+PCSC_FIDO_NODISCARD bool pcsc_fido_daemon_hid_decode_init_header(
+    const uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE], uint32_t* cid,
+    uint8_t* cmd, size_t* payload_len);

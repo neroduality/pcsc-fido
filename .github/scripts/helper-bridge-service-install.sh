@@ -39,4 +39,4 @@ pcsc_fido_stop_bridge_for_install() {
   fi
 }
 
-# Reload systemd/udev metadata only — never enable, start, or restart systemd units here.
+# Reload systemd/udev metadata only -- never enable, start, or restart systemd units here.
