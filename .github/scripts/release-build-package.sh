@@ -113,6 +113,8 @@ fi
 
 mkdir -p "$DIST_DIR"
 
+export PCSC_FIDO_DEPS_SCOPE=package
+
 if [[ $(id -u) -eq 0 && -n ${HOST_UID:-} && ${PCSC_FIDO_CI_AS_USER:-0} != 1 ]]; then
   if [[ $CROSS -eq 1 ]]; then
     bash "${SCRIPT_DIR}/install-cross-deps.sh" "$ARCH"
@@ -150,8 +152,10 @@ if [[ $CROSS -eq 1 ]]; then
     -DBUILD_TESTING=OFF
   )
   SKIP_CTEST=1
-elif [[ ${AUTO_INSTALL_LINUX_DEPS:-1} != "0" ]]; then
-  bash "${SCRIPT_DIR}/install-linux-deps.sh"
+else
+  if [[ ${AUTO_INSTALL_LINUX_DEPS:-1} != "0" ]]; then
+    bash "${SCRIPT_DIR}/install-linux-deps.sh"
+  fi
   CMAKE_ARGS+=(-DBUILD_TESTING=ON)
 fi
 
@@ -198,6 +202,12 @@ if [[ $CROSS -eq 1 ]]; then
     printf 'error: %s does not look like a %s binary:\n  %s\n' "$binary" "$ARCH" "$(file -b "$binary")" >&2
     exit 1
   fi
+fi
+
+if [[ $CROSS -eq 1 ]]; then
+  bash "${SCRIPT_DIR}/verify-glibc-ceiling.sh" "${binary}" --format deb
+else
+  bash "${SCRIPT_DIR}/verify-glibc-ceiling.sh" "${binary}" --format "${FORMAT}"
 fi
 
 printf -- '-- release-build-package: %s %s complete --\n' "$FORMAT" "$ARCH"

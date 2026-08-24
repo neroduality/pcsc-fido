@@ -30,6 +30,8 @@ Daemon-side stopgap middleware for Linux: Exposes a virtual FIDO HID device via 
 
 **Linux only** -- this bridge targets Linux browser flows that do not already expose NFC FIDO cards through the platform WebAuthn stack.
 
+**From 0.2.1:** ISO C23 (GCC 13+ / Clang 16+). Packages are built on Debian 13 / Fedora 38 so they install there and on newer releases (glibc **≥ ~2.41** / **≥ ~2.37**).
+
 ## Quick start
 
 You need: an NFC reader / Smart Card reader (examples below), an **NFC FIDO card / NFC enabled security key**, and Firefox, Chrome, or Brave.

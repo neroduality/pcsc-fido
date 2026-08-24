@@ -257,10 +257,10 @@ help:
 	  '  make verify               Full verification: plain, ASan, UBSan, TSan, Valgrind (needs valgrind)' \
 	  '  make lint                 Org lint kit: format, clang-tidy, cppcheck, OpenSSF flag audit, policy checks' \
 	  '  make security-lint        zizmor, actionlint and TruffleHog' \
-	  '  make ci-local             Local CI replay (spec + lint container; CI_LOCAL_FLAGS; default --quick)' \
+	  '  make ci-local             Local CI replay (lint + container matrix; CI_LOCAL_FLAGS; default --main)' \
 	  '  make coverage             gcov/lcov line coverage (build/coverage-html/)' \
 	  '  make codeql-local         Local CodeQL database/analyze replay' \
-	  '  make lima                 Local CI in fresh ubuntu-24.04 Lima VM (lint runs in Debian container)' \
+	  '  make lima                 Local CI in Lima VM (lint container; default --quick)' \
 	  '  make package              CPack TGZ/DEB/RPM (TGZ always; .deb/.rpm need dpkg-deb or rpmbuild)' \
 	  '  make clean                Remove build/, build-*, .fuzz, scan-build-report, .lint-kit-org, and tool caches (not dist/)' \
 	  '  make deps                 Install Linux build/test/lint deps (run once on new machines)' \

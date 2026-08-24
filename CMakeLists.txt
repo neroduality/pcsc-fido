@@ -19,7 +19,7 @@ cmake_minimum_required(VERSION 3.20)
 # Release version: bump `project(... VERSION ...)` below before tagging (v* tag
 # without the leading v). CMake generates `include/pcsc_fido/version.h` from
 # that value; it feeds CPACK, packages, and `pcsc-fido --version`. See RELEASE.md.
-project(pcsc_fido VERSION 0.2.0 LANGUAGES C)
+project(pcsc_fido VERSION 0.2.1 LANGUAGES C)
 
 configure_file(
   "${CMAKE_CURRENT_SOURCE_DIR}/include/pcsc_fido/version.h.in"

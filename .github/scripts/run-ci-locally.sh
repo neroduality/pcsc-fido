@@ -42,8 +42,8 @@ Usage:
   bash .github/scripts/run-ci-locally.sh [options]
 
 Presets:
-  --quick            Lint container only (Main CI quick path; includes spec_traceability; default)
-  --main             --quick + container matrix (Debian + Fedora) + scan-build
+  --quick            Lint container only (Main CI quick path; includes spec_traceability)
+  --main             --quick + container matrix (Debian + Fedora) + scan-build (default)
   --full             --main + line coverage + release smoke (.deb amd64)
 
 Optional add-ons (combine with presets):
@@ -52,7 +52,7 @@ Optional add-ons (combine with presets):
   --quick-release    Native amd64 .deb only (Release workflow smoke)
   --all-release      Native amd64 deb+rpm + all cross deb+rpm (slow)
   --release-arch A   One release port: amd64|arm64 (native deb+rpm) or armhf|ppc64el|riscv64|s390x (cross deb+rpm)
-                       Clears dist/ first (except --all / --all-release). Native RPM: *.x86_64.rpm
+                       Clears dist/ first (except --all / --all-release). Native amd64 RPM: *.x86_64.rpm
   --security         run-security-suite-locally.sh (zizmor, actionlint, TruffleHog)
   --openssf          OpenSSF Scorecard after container matrix
   --lima             Run inside a fresh Lima ubuntu-24.04 VM (host only)
@@ -86,7 +86,8 @@ Script naming (.github/scripts/):
 make ci-local [CI_LOCAL_FLAGS="..."]
 
 Presets:
-  make ci-local                                    # CI_LOCAL_FLAGS=--quick
+  make ci-local                                    # CI_LOCAL_FLAGS=--main
+  make ci-local CI_LOCAL_FLAGS=--quick
   make ci-local CI_LOCAL_FLAGS=--main
   make ci-local CI_LOCAL_FLAGS=--full
 
@@ -98,7 +99,9 @@ Add-ons (combine):
   make ci-local CI_LOCAL_FLAGS="--security"
   make ci-local CI_LOCAL_FLAGS="--openssf"
   make ci-local CI_LOCAL_FLAGS="--main --coverage --release"
-  make lima                                      # same as CI_LOCAL_FLAGS=--lima
+  make lima                                      # --lima + default --quick
+  make lima CI_LOCAL_FLAGS=--quick
+  make lima CI_LOCAL_FLAGS=--main
 
 EOF
 }
@@ -118,6 +121,15 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 set -- "${_parsed_args[@]}"
+
+# Bare make ci-local -> --main; bare make lima -> --quick.
+if [[ $# -eq 0 ]]; then
+  if [[ ${LIMA} -eq 1 ]]; then
+    set -- --quick
+  else
+    set -- --main
+  fi
+fi
 
 if [[ ${LIMA} -eq 1 && ${PCSC_FIDO_CI_LOCAL_IN_VM:-0} != 1 ]]; then
   exec bash "${SCRIPT_DIR}/run-ci-locally-lima.sh" "$@"
@@ -199,10 +211,6 @@ RELEASE_MODE=""
 RUN_SECURITY=0
 RUN_OPENSSF=0
 SKIP_OPENSSF=0
-
-if [[ $# -eq 0 ]]; then
-  set -- --quick
-fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -317,7 +325,7 @@ if [[ ${RUN_RELEASE} -eq 1 ]]; then
     if pcsc_fido_is_cross_arch "${RELEASE_MODE}"; then
       printf 'note: --release-arch %s runs cross deb + rpm container builds.\n' "${RELEASE_MODE}"
     else
-      printf 'note: --release-arch %s runs native deb + rpm container builds (amd64 only on typical hosts).\n' \
+      printf 'note: --release-arch %s runs native deb + rpm container builds.\n' \
         "${RELEASE_MODE}"
     fi
   fi

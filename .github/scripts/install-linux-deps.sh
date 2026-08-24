@@ -88,7 +88,12 @@ pcsc_fido_build_tools_ok() {
 }
 
 pcsc_fido_package_tools_ok() {
-  pcsc_fido_build_tools_ok && { have dpkg-deb || have rpmbuild; }
+  pcsc_fido_build_tools_ok || return 1
+  if have dpkg-deb; then
+    have file
+  else
+    have rpmbuild
+  fi
 }
 
 pcsc_fido_verify_tools_ok() {
@@ -853,7 +858,7 @@ if [[ ${EUID} -ne 0 ]] && ! pcsc_fido_may_use_sudo_for_deps && ! pcsc_fido_can_s
     printf 'or on Fedora/RHEL:\n' >&2
     printf '  sudo dnf install cmake gcc make pkg-config pcsc-lite-devel libasan libubsan rpm-build\n' >&2
     printf 'or on Debian/Ubuntu:\n' >&2
-    printf '  sudo apt-get install cmake gcc make pkg-config libpcsclite-dev libasan8 libubsan1 dpkg-dev debhelper\n' >&2
+    printf '  sudo apt-get install cmake gcc make pkg-config libpcsclite-dev libasan8 libubsan1 dpkg-dev debhelper file\n' >&2
   elif [[ ${deps_scope} == verify ]]; then
     printf 'or on Fedora/RHEL:\n' >&2
     printf '  sudo dnf install cmake gcc make pkg-config pcsc-lite-devel libasan libubsan libtsan valgrind\n' >&2
@@ -893,29 +898,26 @@ if [[ ${deps_scope} == build ]]; then
 fi
 
 if [[ ${deps_scope} == package ]]; then
-  if ! pcsc_fido_build_tools_ok; then
+  if ! pcsc_fido_package_tools_ok; then
     if command -v dnf >/dev/null 2>&1; then
-      as_root dnf install -y \
-        cmake gcc make pkgconf-pkg-config pcsc-lite pcsc-lite-devel \
-        libasan libubsan
+      if ! pcsc_fido_build_tools_ok; then
+        as_root dnf install -y \
+          cmake gcc make pkgconf-pkg-config pcsc-lite pcsc-lite-devel \
+          libasan libubsan
+      fi
+      if ! have rpmbuild; then
+        as_root dnf install -y rpm-build
+      fi
     elif command -v apt-get >/dev/null 2>&1; then
       export DEBIAN_FRONTEND=noninteractive
       as_root apt-get update
-      as_root apt-get install -y \
-        cmake gcc make pkg-config libpcsclite-dev
-      as_root apt-get install -y libasan8 2>/dev/null || as_root apt-get install -y libasan6 2>/dev/null || true
-      as_root apt-get install -y libubsan2 2>/dev/null || as_root apt-get install -y libubsan1 2>/dev/null || true
-    else
-      echo "Unsupported package manager; install cmake, gcc, make, pkg-config, libpcsclite-dev." >&2
-      exit 1
-    fi
-  fi
-  if ! have dpkg-deb && ! have rpmbuild; then
-    if command -v dnf >/dev/null 2>&1; then
-      as_root dnf install -y rpm-build
-    elif command -v apt-get >/dev/null 2>&1; then
-      export DEBIAN_FRONTEND=noninteractive
-      as_root apt-get install -y dpkg-dev debhelper
+      if ! pcsc_fido_build_tools_ok; then
+        as_root apt-get install -y \
+          cmake gcc make pkg-config libpcsclite-dev
+        as_root apt-get install -y libasan8 2>/dev/null || as_root apt-get install -y libasan6 2>/dev/null || true
+        as_root apt-get install -y libubsan2 2>/dev/null || as_root apt-get install -y libubsan1 2>/dev/null || true
+      fi
+      as_root apt-get install -y dpkg-dev debhelper file
     else
       printf 'error: install dpkg-deb or rpmbuild for CPack .deb/.rpm output\n' >&2
       exit 1
@@ -958,7 +960,7 @@ if command -v dnf >/dev/null 2>&1; then
   as_root dnf install -y \
     cmake gcc make ninja-build pkgconf-pkg-config pcsc-lite pcsc-lite-devel systemd udev \
     libasan libubsan libtsan rpm-build lcov valgrind \
-    clang clang-analyzer clang-tools-extra clang-format cppcheck shellcheck codespell shfmt \
+    clang clang-analyzer clang-tools-extra cppcheck shellcheck codespell shfmt \
     yamllint \
     git ca-certificates curl gnupg python3 python3-pip python3-pyyaml nodejs npm
 elif command -v apt-get >/dev/null 2>&1; then

@@ -35,7 +35,7 @@ Usage:
 Options:
   --all           Run Debian then Fedora (default)
   --debian-only   debian:trixie-slim only
-  --fedora-only   fedora:43 only
+  --fedora-only   fedora:38 and fedora:43
   --skip-openssf  Skip OpenSSF Scorecard after the matrix
   -h, --help      Help
 
@@ -127,6 +127,7 @@ run_in_image() {
     -e "HOST_UID=$(id -u)" \
     -e "HOST_GID=$(id -g)" \
     -e "AUTO_INSTALL_LINUX_DEPS=1" \
+    -e "PCSC_FIDO_DEPS_SCOPE=build" \
     "${image}" \
     bash -ceu '
       if [[ "${PCSC_FIDO_LOCAL_CI_KEEP_BUILDS:-0}" != "1" ]]; then
@@ -139,10 +140,17 @@ run_in_image() {
 }
 
 if [[ ${RUN_DEBIAN} -eq 1 ]]; then
-  run_in_image debian:trixie-slim "Debian trixie"
+  run_in_image \
+    debian:trixie-slim@sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258 \
+    "Debian trixie"
 fi
 if [[ ${RUN_FEDORA} -eq 1 ]]; then
-  run_in_image fedora:43 "Fedora 43"
+  run_in_image \
+    fedora:38@sha256:b9ff6f23cceb5bde20bb1f79b492b98d71ef7a7ae518ca1b15b26661a11e6a94 \
+    "Fedora 38"
+  run_in_image \
+    fedora:43@sha256:762d73ba1c455232b0272c5d445a34f36c4b9f421cbc05ce8102552325b6a222 \
+    "Fedora 43"
 fi
 
 if [[ ${SKIP_OPENSSF} -eq 0 ]]; then

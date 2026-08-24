@@ -33,15 +33,15 @@ Usage:
   bash .github/scripts/run-local-release-packages.sh MODE [options]
 
 Modes (pick one):
-  --quick            Native amd64 .deb only (fast smoke; ~Release deb amd64)
-  --native           Native amd64 deb + rpm (host/container amd64)
+  --quick            Native .deb for this host arch (amd64 or arm64; fast smoke)
+  --native           Native deb + rpm for this host arch (or --arch)
   --cross ARCH       One cross arch, deb + rpm (armhf|ppc64el|riscv64|s390x)
   --all-cross        All four cross arches, deb + rpm
-  --all              Native amd64 deb+rpm + all cross deb+rpm (slow)
+  --all              Native deb+rpm (host arch) + all cross deb+rpm (slow)
 
 Options:
   --format FMT       deb, rpm, or both (default: both except --quick uses deb)
-  --arch ARCH        With --native: amd64 only locally (arm64 needs arm64 runner)
+  --arch ARCH        With --native/--all: amd64 or arm64 (default: this host)
   -h, --help         Help
 
 Environment:
@@ -54,12 +54,13 @@ Examples:
   bash .github/scripts/run-local-release-packages.sh --quick
   bash .github/scripts/run-local-release-packages.sh --cross riscv64
   bash .github/scripts/run-local-release-packages.sh --native --format rpm
+  bash .github/scripts/run-local-release-packages.sh --native --arch arm64 --format deb
 
 Artifacts land in dist/ (and build/release-*). Cross builds use debian:trixie
 containers, matching .github/workflows/release.yml.
 
 Native amd64 RPM files use the .x86_64.rpm suffix (not .amd64.rpm). --quick builds
-amd64 .deb only; use --native or --release-arch amd64 for amd64 deb + rpm.
+a native .deb for the host arch; use --native or --release-arch amd64|arm64 for deb+rpm.
 
 EOF
 }
@@ -73,8 +74,9 @@ source "${SCRIPT_DIR}/helper-container-bind-mount.sh"
 
 MODE=""
 FORMAT=""
-NATIVE_ARCH=amd64
+NATIVE_ARCH=""
 CROSS_ARCH=""
+NATIVE_ARCH_SET=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -106,6 +108,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --arch)
       NATIVE_ARCH="${2:-}"
+      NATIVE_ARCH_SET=1
       shift
       ;;
     -h | --help)
@@ -138,6 +141,25 @@ case "${FORMAT}" in
     ;;
 esac
 
+pcsc_fido_host_native_release_arch() {
+  case "$(uname -m)" in
+    x86_64 | amd64) printf '%s\n' amd64 ;;
+    aarch64 | arm64) printf '%s\n' arm64 ;;
+    *)
+      printf 'error: unsupported host arch for native packages: %s (need amd64 or arm64)\n' \
+        "$(uname -m)" >&2
+      return 1
+      ;;
+  esac
+}
+
+if [[ ${NATIVE_ARCH_SET} -eq 0 ]]; then
+  NATIVE_ARCH="$(pcsc_fido_host_native_release_arch)"
+elif ! pcsc_fido_is_native_release_arch "${NATIVE_ARCH}"; then
+  printf 'error: --arch must be amd64 or arm64 (got %s)\n' "${NATIVE_ARCH}" >&2
+  exit 2
+fi
+
 ENGINE="${CONTAINER_ENGINE:-docker}"
 if ! command -v "${ENGINE}" >/dev/null 2>&1; then
   printf 'error: %s not found (install or set CONTAINER_ENGINE)\n' "${ENGINE}" >&2
@@ -166,14 +188,29 @@ chown_outputs() {
 run_native_package() {
   local arch="$1"
   local fmt="$2"
-  local dist_before dist_after artifact
-  if [[ ${arch} != amd64 ]]; then
-    printf 'error: local native release builds support amd64 only (got %s)\n' "${arch}" >&2
-    printf 'hint: arm64 release packages need an arm64 runner/CI; use --cross for other ports\n' >&2
+  local image label dist_before dist_after artifact
+  if ! pcsc_fido_is_native_release_arch "${arch}"; then
+    printf 'error: native release builds support amd64 and arm64 only (got %s)\n' "${arch}" >&2
+    printf 'hint: use --cross for armhf|ppc64el|riscv64|s390x\n' >&2
     exit 2
   fi
 
-  printf '\n-- Release packages: native %s %s (debian:trixie-slim) --\n' "${arch}" "${fmt}"
+  case "${fmt}" in
+    deb)
+      image="debian:trixie-slim@sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258"
+      label="debian:trixie-slim"
+      ;;
+    rpm)
+      image="fedora:38@sha256:b9ff6f23cceb5bde20bb1f79b492b98d71ef7a7ae518ca1b15b26661a11e6a94"
+      label="fedora:38"
+      ;;
+    *)
+      printf 'error: unsupported native format: %s\n' "${fmt}" >&2
+      exit 2
+      ;;
+  esac
+
+  printf '\n-- Release packages: native %s %s (%s) --\n' "${arch}" "${fmt}" "${label}"
   dist_before="$(mktemp)"
   find "${REPO_ROOT}/dist" -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' \) -printf '%f\n' 2>/dev/null | sort >"${dist_before}" || true
   # shellcheck disable=SC2016
@@ -185,7 +222,7 @@ run_native_package() {
     -e "HOST_UID=$(id -u)" \
     -e "HOST_GID=$(id -g)" \
     -e "AUTO_INSTALL_LINUX_DEPS=1" \
-    debian:trixie-slim \
+    "${image}" \
     bash -ceu '
       bash /src/.github/scripts/ci-bootstrap-container.sh
       bash /src/.github/scripts/release-build-package.sh --format "'"${fmt}"'" --arch "'"${arch}"'"
@@ -222,7 +259,7 @@ run_cross_package() {
     -e "HOST_UID=$(id -u)" \
     -e "HOST_GID=$(id -g)" \
     -e "AUTO_INSTALL_LINUX_DEPS=1" \
-    debian:trixie \
+    debian:trixie@sha256:34cd9e9fd437c0a095ec39cb2e73422c9f30821b0d0848ed74fd0d43bae4d958 \
     bash -ceu '
       bash /src/.github/scripts/release-build-package.sh --format "'"${fmt}"'" --arch "'"${arch}"'" --cross
     '
@@ -298,8 +335,8 @@ esac
 
 case "${MODE}" in
   quick)
-    release_step_begin "native amd64 deb"
-    run_native_package amd64 deb
+    release_step_begin "native ${NATIVE_ARCH} deb"
+    run_native_package "${NATIVE_ARCH}" deb
     ;;
   native)
     run_formats run_native_package_wrapped "${NATIVE_ARCH}"
@@ -313,7 +350,7 @@ case "${MODE}" in
     done
     ;;
   all)
-    run_formats run_native_package_wrapped amd64
+    run_formats run_native_package_wrapped "${NATIVE_ARCH}"
     for arch in "${PCSC_FIDO_CROSS_ARCHES[@]}"; do
       run_formats run_cross_package_wrapped "${arch}"
     done

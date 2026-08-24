@@ -29,9 +29,9 @@ fi
 if command -v apt-get >/dev/null 2>&1; then
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
-  apt-get install -y --no-install-recommends ca-certificates git util-linux
+  apt-get install -y --no-install-recommends ca-certificates git util-linux clang-tools
 elif command -v dnf >/dev/null 2>&1; then
-  dnf install -y --setopt=install_weak_deps=False ca-certificates git util-linux
+  dnf install -y --setopt=install_weak_deps=False ca-certificates git util-linux clang-analyzer
   dnf clean all
 else
   printf 'error: unsupported base image (need apt-get or dnf)\n' >&2

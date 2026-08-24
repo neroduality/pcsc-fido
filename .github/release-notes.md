@@ -49,6 +49,7 @@ Verify downloads: `sha256sum -c SHA256SUMS` (see Assets).
 - **Source:** `pcsc-fido-@VERSION@.tar.gz` (git archive at tag)
 - **Integrity:** `SHA256SUMS` (GNU `sha256sum` format)
 - **Tests:** Release runs Main CI (lint + Debug/scan-build matrix) before packaging; native package builds also run `ctest` with `BUILD_TESTING=ON`; cross-compiled ports skip unit tests (`SKIP_CTEST=1`)
+- **Packages:** From **0.2.1** (ISO C23): `.deb` built on Debian 13 / trixie (glibc **≥ 2.41**), `.rpm` on Fedora 38 (glibc **≥ 2.37**)
 
 ## Notes
 

@@ -21,6 +21,8 @@ Publish **`pcsc-fido`** packages, source, and checksums from an annotated `v*` t
 
 Pushing a tag runs [`.github/workflows/release.yml`](.github/workflows/release.yml). That workflow first runs **Main CI** for the tagged commit (reusable `main-ci.yml`: lint container + Debian/Fedora test matrix), then builds packages, writes `SHA256SUMS`, and creates the GitHub Release from [`.github/release-notes.md`](.github/release-notes.md) (`release-render-notes.sh` substitutes `@TAG@` / `@VERSION@`). For release-specific notes, edit the release description in the GitHub UI after CI finishes.
 
+From **0.2.1** (ISO C23), `.deb` / `.rpm` packages are built on **Debian 13 (trixie)** and **Fedora 38** — the oldest stables that still provide a C23 toolchain — so installs need glibc **≥ ~2.41** / **≥ ~2.37**. CI and local packaging run `verify-glibc-ceiling.sh` (`readelf`) to reject any binary that requires a newer `GLIBC_*`.
+
 ## Maintainer checklist
 
 1. Merge to **`main`** with green **Main CI**.

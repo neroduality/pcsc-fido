@@ -100,9 +100,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - id: debian-sid
-            name: Debian sid
-            image: debian:sid-slim@sha256:54f7a23f03be1e9fe2849c61a7455588ea29b84c1659440f8ece2aea4c9871af
+          - id: debian-trixie
+            name: Debian trixie
+            image: debian:trixie-slim@sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258
+          - id: fedora-38
+            name: Fedora 38
+            image: fedora:38@sha256:b9ff6f23cceb5bde20bb1f79b492b98d71ef7a7ae518ca1b15b26661a11e6a94
           - id: fedora-43
             name: Fedora 43
             image: fedora:43@sha256:762d73ba1c455232b0272c5d445a34f36c4b9f421cbc05ce8102552325b6a222
@@ -114,8 +117,7 @@ jobs:
     env:
       AUTO_INSTALL_LINUX_DEPS: "1"
       INSTALL_DEPS: "1"
-      # full scope: matrix runs scan-build (nero sets INSTALL_LINT_DEPS=0 for unit tests only).
-      PCSC_FIDO_DEPS_SCOPE: "full"
+      PCSC_FIDO_DEPS_SCOPE: "build"
 
     steps:
       # Inline: repo scripts are not available until after checkout.
@@ -124,9 +126,9 @@ jobs:
           if command -v apt-get >/dev/null 2>&1; then
             export DEBIAN_FRONTEND=noninteractive
             apt-get update -qq
-            apt-get install -y --no-install-recommends ca-certificates git tar
+            apt-get install -y --no-install-recommends ca-certificates git tar clang-tools
           elif command -v dnf >/dev/null 2>&1; then
-            dnf install -y --setopt=install_weak_deps=False ca-certificates git tar
+            dnf install -y --setopt=install_weak_deps=False ca-certificates git tar clang-analyzer
             dnf clean all
           else
             printf 'error: unsupported base image (need apt-get or dnf)\n' >&2
