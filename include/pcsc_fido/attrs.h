@@ -83,3 +83,33 @@
 #else
 #define PCSC_FIDO_COUNTED_BY(N)
 #endif
+
+/*
+ * Scope-exit cleanup. GCC/Clang __attribute__((cleanup)) is the only mechanism
+ * that runs on every exit path (early return, goto) without hand-written
+ * labels; it backs PCSC_FIDO_SCRUB_ON_EXIT in mem_util.h. It does not run on
+ * _exit/abort/fatal signals. There is deliberately no no-op fallback: a
+ * toolchain without it would silently drop the secure wipes, so
+ * cmake/VerifyCompiler.cmake probes for the attribute and fails configure
+ * when it is missing.
+ */
+#define PCSC_FIDO_CLEANUP(fn) __attribute__((cleanup(fn)))
+
+/*
+ * ThreadSanitizer detection, toolchain-neutral: GCC predefines
+ * __SANITIZE_THREAD__, Clang only exposes __has_feature(thread_sanitizer).
+ * Always defined (0/1) so -Wundef-clean `#if` tests work.
+ */
+#if defined(__SANITIZE_THREAD__)
+#define PCSC_FIDO_SANITIZE_THREAD 1
+#elif defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+#define PCSC_FIDO_SANITIZE_THREAD 1
+#endif
+#endif
+#ifndef PCSC_FIDO_SANITIZE_THREAD
+#define PCSC_FIDO_SANITIZE_THREAD 0
+#endif
+
+#define PCSC_FIDO_CONCAT_IMPL(a, b) a##b
+#define PCSC_FIDO_CONCAT(a, b) PCSC_FIDO_CONCAT_IMPL(a, b)

@@ -15,8 +15,9 @@
 # limitations under the License.
 
 # Host-side CI on linux/amd64 GitHub runners: lint gate, then container matrix
-# (Debug unit tests + scan-build per container).
-# Runs on push/PR, workflow_dispatch, and as a reusable workflow (Release).
+# (Debug + Release unit tests + scan-build per container) and CBMC parser
+# proofs (Debian trixie). Runs on push/PR, workflow_dispatch, and as a reusable
+# workflow (Release).
 # Local reproduction: make ci-local CI_LOCAL_FLAGS=--main
 name: Main CI
 
@@ -43,7 +44,7 @@ jobs:
     name: Lint (make lint)
     runs-on: ubuntu-24.04
     container:
-      image: debian:sid-slim@sha256:54f7a23f03be1e9fe2849c61a7455588ea29b84c1659440f8ece2aea4c9871af
+      image: docker.io/library/debian:sid-slim@sha256:5ac67a4d7c0de96e83873e4dd8f7ea3b507ba292fb2cce60a0c3f73322df5cae
       options: --platform linux/amd64
     timeout-minutes: 360
 
@@ -102,13 +103,13 @@ jobs:
         include:
           - id: debian-trixie
             name: Debian trixie
-            image: debian:trixie-slim@sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258
+            image: docker.io/library/debian:trixie-slim@sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258
           - id: fedora-38
             name: Fedora 38
-            image: fedora:38@sha256:b9ff6f23cceb5bde20bb1f79b492b98d71ef7a7ae518ca1b15b26661a11e6a94
+            image: docker.io/library/fedora:38@sha256:b9ff6f23cceb5bde20bb1f79b492b98d71ef7a7ae518ca1b15b26661a11e6a94
           - id: fedora-43
             name: Fedora 43
-            image: fedora:43@sha256:762d73ba1c455232b0272c5d445a34f36c4b9f421cbc05ce8102552325b6a222
+            image: docker.io/library/fedora:43@sha256:a651ddf48ea28a06ed4e1e6519f51c9f47e7a5a138722ade87369b8fbb7e5b42
 
     container:
       image: ${{ matrix.image }}
@@ -126,7 +127,14 @@ jobs:
           if command -v apt-get >/dev/null 2>&1; then
             export DEBIAN_FRONTEND=noninteractive
             apt-get update -qq
+            # clang-tools → clang-NN for scan-build. Skip the `clang` metapackage:
+            # bare clang on PATH skews lint-kit host_target_triple vs /usr/bin/cc.
+            # llvm-N provides llvm-ar-N and llvm-ranlib-N (not in clang-tools).
             apt-get install -y --no-install-recommends ca-certificates git tar clang-tools
+            scan_build_path="$(readlink -f -- "$(command -v scan-build)")"
+            if [[ ${scan_build_path} =~ scan-build-([0-9]+) ]]; then
+              apt-get install -y --no-install-recommends "llvm-${BASH_REMATCH[1]}"
+            fi
           elif command -v dnf >/dev/null 2>&1; then
             dnf install -y --setopt=install_weak_deps=False ca-certificates git tar clang-analyzer
             dnf clean all
@@ -139,7 +147,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Debug unit tests + scan-build (ci-run-tests.sh)
+      - name: Debug + Release unit tests + scan-build (ci-run-tests.sh)
         env:
           CI_SKIP_CHECKOUT_PREREQUISITES: "1"
         run: bash .github/scripts/ci-run-tests.sh
@@ -162,8 +170,35 @@ jobs:
 
       - name: Upload scan-build report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: scan-build-${{ matrix.id }}
           path: scan-build-report
           if-no-files-found: warn
+
+  # CBMC on the APDU, CBOR, and CTAPHID reassembly parsers. Local: make cbmc
+  cbmc:
+    name: CBMC parser proofs
+    needs: [lint]
+    runs-on: ubuntu-24.04
+    container:
+      image: docker.io/library/debian:trixie-slim@sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258
+      options: --platform linux/amd64
+    timeout-minutes: 30
+
+    steps:
+      # Inline: repo scripts are not available until after checkout.
+      # libc6-dev: the cbmc package depends on gcc for preprocessing but not on
+      # the C library headers it needs.
+      - name: Install checkout prerequisites and CBMC
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y --no-install-recommends ca-certificates git tar cbmc libc6-dev
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: CBMC proofs (run-local-cbmc.sh)
+        run: bash .github/scripts/run-local-cbmc.sh

@@ -165,7 +165,7 @@ bool pcsc_fido_reader_list(SCARDCONTEXT ctx, char* buf, DWORD* buf_len,
                            char* err, size_t err_cap) {
   LONG rv;
   time_t deadline = pcsc_fido_add_seconds_saturating(
-      time(PCSC_FIDO_NULL), PCSC_FIDO_BRIDGE_READER_ENUM_TIMEOUT_SEC);
+      pcsc_fido_monotonic_sec(), PCSC_FIDO_BRIDGE_READER_ENUM_TIMEOUT_SEC);
   if (buf == PCSC_FIDO_NULL || buf_len == PCSC_FIDO_NULL) {
     pcsc_fido_set_err(err, err_cap, "invalid reader list arguments");
     return false;
@@ -201,7 +201,7 @@ bool pcsc_fido_reader_list(SCARDCONTEXT ctx, char* buf, DWORD* buf_len,
       return false;
     }
     pcsc_fido_sleep_ms((long)PCSC_FIDO_READER_LIST_RETRY_MS);
-  } while (time(PCSC_FIDO_NULL) < deadline);
+  } while (pcsc_fido_monotonic_sec() < deadline);
   if (rv == SCARD_S_SUCCESS || pcsc_no_readers(rv)) {
     pcsc_fido_set_err(err, err_cap, "no PC/SC readers available");
   } else {
@@ -248,9 +248,13 @@ static bool probe_select_transmit(SCARDHANDLE card, const SCARD_IO_REQUEST* pci,
                                   const uint8_t* apdu, DWORD apdu_len) {
   uint8_t response[PCSC_FIDO_PROBE_SELECT_RESPONSE_MAX];
   DWORD response_len = sizeof(response);
+  /* Same SELECT response select_fido scrubs. This copy is not the chain
+   * chunk, so it would otherwise stay on the stack after the probe. */
+  PCSC_FIDO_SCRUB_ON_EXIT(response, sizeof(response));
   LONG rv = SCardTransmit(card, pci, apdu, apdu_len, PCSC_FIDO_NULL, response,
                           &response_len);
   return rv == SCARD_S_SUCCESS && response_len >= PROBE_SW_LEN &&
+         response_len <= sizeof(response) &&
          response[response_len - PROBE_SW_LEN] == PROBE_SW_NO_ERROR_HI &&
          response[response_len - 1u] == 0x00u;
 }
@@ -299,13 +303,8 @@ static bool pick_best_present_reader(
     size_t present_count, char* reader, size_t reader_cap) {
   const char* probe_order[PCSC_FIDO_BRIDGE_MAX_READERS];
   size_t probe_count = 0u;
-  size_t contactless_count = 0u;
-  const char* only_contactless = PCSC_FIDO_NULL;
   if (present_count == 0u || reader == PCSC_FIDO_NULL || reader_cap == 0u) {
     return false;
-  }
-  if (present_count == 1u) {
-    return pcsc_fido_copy_cstr(reader, reader_cap, present[0]);
   }
   for (size_t i = 0u; i < present_count; i++) {
     size_t name_len = 0u;
@@ -314,13 +313,8 @@ static bool pick_best_present_reader(
       continue;
     }
     if (pcsc_fido_reader_name_is_contactless_slot_len(present[i], name_len)) {
-      contactless_count++;
-      only_contactless = present[i];
       probe_order[probe_count++] = present[i];
     }
-  }
-  if (contactless_count == 1u) {
-    return pcsc_fido_copy_cstr(reader, reader_cap, only_contactless);
   }
   for (size_t i = 0u; i < present_count; i++) {
     size_t name_len = 0u;
@@ -340,7 +334,7 @@ static bool pick_best_present_reader(
       return pcsc_fido_copy_cstr(reader, reader_cap, probe_order[i]);
     }
   }
-  return pcsc_fido_copy_cstr(reader, reader_cap, present[0]);
+  return false;
 }
 
 static bool wait_for_present_reader(SCARDCONTEXT ctx, const char* readers,
@@ -352,7 +346,7 @@ static bool wait_for_present_reader(SCARDCONTEXT ctx, const char* readers,
   size_t candidate_count =
       collect_reader_candidates(readers, readers_len, candidates);
   time_t deadline = pcsc_fido_add_seconds_saturating(
-      time(PCSC_FIDO_NULL), PCSC_FIDO_WAIT_SEC_DEFAULT);
+      pcsc_fido_monotonic_sec(), PCSC_FIDO_WAIT_SEC_DEFAULT);
   if (reader == PCSC_FIDO_NULL || reader_cap == 0u) {
     pcsc_fido_set_err(err, err_cap, "invalid reader wait arguments");
     return false;
@@ -369,7 +363,7 @@ static bool wait_for_present_reader(SCARDCONTEXT ctx, const char* readers,
   pcsc_fido_log(PCSC_FIDO_LOG_DEBUG,
                 "waiting for FIDO NFC card on %zu possible readers",
                 candidate_count);
-  while (time(PCSC_FIDO_NULL) < deadline) {
+  while (pcsc_fido_monotonic_sec() < deadline) {
     const char* present[PCSC_FIDO_BRIDGE_MAX_READERS];
     size_t present_count = 0u;
     LONG rv = SCardGetStatusChange(ctx, PCSC_FIDO_READER_STATUS_POLL_MS, states,
@@ -392,22 +386,16 @@ static bool wait_for_present_reader(SCARDCONTEXT ctx, const char* readers,
         if (pcsc_fido_session_cancel_requested()) {
           pcsc_fido_set_err(err, err_cap,
                             PCSC_FIDO_ERR_MSG_CANCELLED_CARD_WAIT);
-        } else {
-          pcsc_fido_set_err(err, err_cap, "PC/SC reader name too long");
+          return false;
         }
-        return false;
-      }
-      if (present_count == 1u) {
-        pcsc_fido_log(PCSC_FIDO_LOG_DEBUG,
-                      "using PC/SC reader \"%s\" (selected by card presence)",
-                      reader);
+        /* A present card that is not a FIDO authenticator is not a reader
+         * yet. Keep waiting for one that answers SELECT. */
       } else {
         pcsc_fido_log(PCSC_FIDO_LOG_DEBUG,
-                      "%zu readers have cards present; using \"%s\" for this "
-                      "browser operation",
-                      present_count, reader);
+                      "using PC/SC reader \"%s\" (FIDO SELECT answered)",
+                      reader);
+        return true;
       }
-      return true;
     }
     if (pcsc_fido_session_cancel_requested()) {
       pcsc_fido_set_err(err, err_cap, PCSC_FIDO_ERR_MSG_CANCELLED_CARD_WAIT);
@@ -457,7 +445,7 @@ static bool wait_for_card(SCARDCONTEXT ctx, const char* reader, char* err,
                           size_t err_cap) {
   SCARD_READERSTATE state;
   time_t deadline = pcsc_fido_add_seconds_saturating(
-      time(PCSC_FIDO_NULL), PCSC_FIDO_WAIT_SEC_DEFAULT);
+      pcsc_fido_monotonic_sec(), PCSC_FIDO_WAIT_SEC_DEFAULT);
   if (reader == PCSC_FIDO_NULL) {
     pcsc_fido_set_err(err, err_cap, "invalid reader name for card wait");
     return false;
@@ -466,7 +454,7 @@ static bool wait_for_card(SCARDCONTEXT ctx, const char* reader, char* err,
   state.szReader = reader;
   state.dwCurrentState = SCARD_STATE_UNAWARE;
   pcsc_fido_log(PCSC_FIDO_LOG_DEBUG, "waiting for FIDO NFC card");
-  while (time(PCSC_FIDO_NULL) < deadline) {
+  while (pcsc_fido_monotonic_sec() < deadline) {
     LONG rv;
     if (pcsc_fido_session_cancel_requested()) {
       pcsc_fido_set_err(err, err_cap, PCSC_FIDO_ERR_MSG_CANCELLED_CARD_WAIT);

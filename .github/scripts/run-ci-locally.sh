@@ -24,6 +24,7 @@
 #
 # Standalone pieces (also invoked by presets above):
 #   run-local-container-matrix.sh   Debian + Fedora Debug tests + scan-build
+#   run-local-cbmc.sh               CBMC parser proofs (run here in a trixie container)
 #   run-local-line-coverage.sh      gcov/lcov HTML
 #   run-local-release-packages.sh   Release .deb/.rpm into dist/
 #   run-local-openssf.sh            OpenSSF Scorecard
@@ -43,14 +44,14 @@ Usage:
 
 Presets:
   --quick            Lint container only (Main CI quick path; includes spec_traceability)
-  --main             --quick + container matrix (Debian + Fedora) + scan-build (default)
+  --main             --quick + container matrix (Debian + Fedora) + scan-build + CBMC proofs (default)
   --full             --main + line coverage + release smoke (.deb amd64)
 
 Optional add-ons (combine with presets):
   --coverage         gcov/lcov line coverage (build/coverage-html/)
-  --release          Release packages (--quick-release unless --all-release or --release-arch)
-  --quick-release    Native amd64 .deb only (Release workflow smoke)
-  --all-release      Native amd64 deb+rpm + all cross deb+rpm (slow)
+  --release          Alias of --all-release (or --release-arch if given an arch)
+  --quick-release    Native host-arch .deb only (Release workflow smoke)
+  --all-release      Native host-arch deb+rpm + all cross deb+rpm (slow)
   --release-arch A   One release port: amd64|arm64 (native deb+rpm) or armhf|ppc64el|riscv64|s390x (cross deb+rpm)
                        Clears dist/ first (except --all / --all-release). Native amd64 RPM: *.x86_64.rpm
   --security         run-security-suite-locally.sh (zizmor, actionlint, TruffleHog)
@@ -60,6 +61,7 @@ Optional add-ons (combine with presets):
 Skip flags:
   --skip-lint        Skip lint container (org lint kit; includes spec_traceability)
   --skip-containers  Skip Debian/Fedora container matrix
+  --skip-cbmc        Skip CBMC parser proofs (Debian trixie container; ``make cbmc`` on the host)
   --skip-openssf     Skip OpenSSF Scorecard
 
 Environment:
@@ -141,7 +143,7 @@ source "${SCRIPT_DIR}/helper-cross-targets.sh"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/helper-container-bind-mount.sh"
 
-LINT_IMAGE_DEFAULT="debian:sid-slim@sha256:54f7a23f03be1e9fe2849c61a7455588ea29b84c1659440f8ece2aea4c9871af"
+LINT_IMAGE_DEFAULT="debian:sid-slim@sha256:5ac67a4d7c0de96e83873e4dd8f7ea3b507ba292fb2cce60a0c3f73322df5cae"
 
 resolve_lint_kit_root() {
   local candidate=""
@@ -201,10 +203,37 @@ run_lint_container() {
     bash /src/.github/scripts/ci-run-lint.sh
 }
 
+# Same image as the Main CI cbmc job; CBMC comes from the Debian package.
+CBMC_IMAGE_DEFAULT="debian:trixie-slim@sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258"
+
+run_cbmc_container() {
+  local engine
+  engine="${CONTAINER_ENGINE:-docker}"
+  if ! command -v "${engine}" >/dev/null 2>&1; then
+    printf 'error: %s not found (install or set CONTAINER_ENGINE)\n' "${engine}" >&2
+    exit 1
+  fi
+
+  printf '\n-- Local CI: CBMC parser proofs (%s) --\n' "${CBMC_IMAGE_DEFAULT}"
+  # Read-only mount: the proofs write nothing, so no ownership restore is needed.
+  "${engine}" run --rm \
+    --platform linux/amd64 \
+    -v "${REPO_ROOT}:/src:ro" \
+    -w /src \
+    "${CBMC_IMAGE_DEFAULT}" \
+    bash -ceu '
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update -qq
+      apt-get install -y --no-install-recommends cbmc libc6-dev >/dev/null
+      bash .github/scripts/run-local-cbmc.sh
+    '
+}
+
 export AUTO_INSTALL_LINUX_DEPS="${AUTO_INSTALL_LINUX_DEPS:-0}"
 
 RUN_LINT=0
 RUN_CONTAINERS=0
+RUN_CBMC=0
 RUN_COVERAGE=0
 RUN_RELEASE=0
 RELEASE_MODE=""
@@ -221,10 +250,12 @@ while [[ $# -gt 0 ]]; do
     --main)
       RUN_LINT=1
       RUN_CONTAINERS=1
+      RUN_CBMC=1
       ;;
     --full)
       RUN_LINT=1
       RUN_CONTAINERS=1
+      RUN_CBMC=1
       RUN_COVERAGE=1
       RUN_RELEASE=1
       RELEASE_MODE=quick
@@ -238,7 +269,7 @@ while [[ $# -gt 0 ]]; do
         RELEASE_MODE="$2"
         shift
       else
-        RELEASE_MODE=quick
+        RELEASE_MODE=all
       fi
       ;;
     --quick-release)
@@ -275,6 +306,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-lint) RUN_LINT=0 ;;
     --skip-containers) RUN_CONTAINERS=0 ;;
+    --skip-cbmc) RUN_CBMC=0 ;;
     --skip-openssf) SKIP_OPENSSF=1 ;;
     -h | --help)
       usage
@@ -309,6 +341,10 @@ if [[ ${RUN_CONTAINERS} -eq 1 ]]; then
   pcsc_fido_restore_bind_mount_ownership
 elif [[ ${RUN_OPENSSF} -eq 1 && ${SKIP_OPENSSF} -eq 0 ]]; then
   bash "${SCRIPT_DIR}/run-local-openssf.sh"
+fi
+
+if [[ ${RUN_CBMC} -eq 1 ]]; then
+  run_cbmc_container
 fi
 
 if [[ ${RUN_COVERAGE} -eq 1 ]]; then

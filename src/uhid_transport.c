@@ -78,6 +78,8 @@ static bool write_uhid_event(int fd, const struct uhid_event* ev) {
 static bool send_packet(int fd,
                         const uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE]) {
   struct uhid_event ev;
+  /* Scope-exit scrub of the UHID event (carries the CTAP HID payload). */
+  PCSC_FIDO_SCRUB_ON_EXIT(&ev, sizeof(ev));
   if (packet == PCSC_FIDO_NULL) {
     return false;
   }
@@ -97,6 +99,8 @@ bool pcsc_fido_daemon_send_hid_response(int fd, uint32_t cid, uint8_t cmd,
   uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE];
   size_t copied;
   uint8_t seq = 0u;
+  /* Scope-exit scrub of the CTAP response slices staged in packet. */
+  PCSC_FIDO_SCRUB_ON_EXIT(packet, sizeof(packet));
   if (payload_len > PCSC_FIDO_CTAPHID_MAX_FRAMED_PAYLOAD ||
       (payload == PCSC_FIDO_NULL && payload_len != 0u)) {
     return false;

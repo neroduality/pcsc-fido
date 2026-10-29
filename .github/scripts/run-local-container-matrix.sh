@@ -149,7 +149,7 @@ if [[ ${RUN_FEDORA} -eq 1 ]]; then
     fedora:38@sha256:b9ff6f23cceb5bde20bb1f79b492b98d71ef7a7ae518ca1b15b26661a11e6a94 \
     "Fedora 38"
   run_in_image \
-    fedora:43@sha256:762d73ba1c455232b0272c5d445a34f36c4b9f421cbc05ce8102552325b6a222 \
+    fedora:43@sha256:a651ddf48ea28a06ed4e1e6519f51c9f47e7a5a138722ade87369b8fbb7e5b42 \
     "Fedora 43"
 fi
 

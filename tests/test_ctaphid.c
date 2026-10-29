@@ -21,6 +21,7 @@
 #include <string.h>
 #include "pcsc_fido/mem_util.h"
 #include "pcsc_fido/pcsc_log.h"
+#include "scrub_hook.h"
 
 enum {
   TEST_LIT_0X11223344U = 0x11223344u,
@@ -156,6 +157,7 @@ static void exchanges_cbor(void) {
               "prepare cbor response");
   fake.read_count++;
 
+  scrub_hook_reset();
   expect_true(pcsc_fido_hid_exchange(
                   &io, PCSC_FIDO_HID_CMD_CBOR, request, sizeof(request),
                   response, sizeof(response), &response_len, TEST_LIT_100),
@@ -165,6 +167,12 @@ static void exchanges_cbor(void) {
   expect_true(response_len == sizeof(cbor_response) &&
                   memcmp(response, cbor_response, sizeof(cbor_response)) == 0,
               "response payload copied");
+  /* INIT handshake packet+response, then send-side and receive-side
+   * staging packets: four HID-sized scrubs. */
+  expect_true(
+      scrub_hook_calls_with_len(PCSC_FIDO_HID_PACKET_SIZE) == TEST_LIT_4U,
+      "INIT, send, and receive staging packets scrubbed");
+  expect_true(scrub_hook_all_zero(), "packet scrubs left regions zeroed");
 }
 
 static void exchanges_large_request_with_continuation(void) {
@@ -299,10 +307,17 @@ static void rejects_bad_continuation_sequence(void) {
               "prepare bad sequence continuation");
   fake.read_count++;
 
+  scrub_hook_reset();
   expect_true(!pcsc_fido_hid_exchange(
                   &io, PCSC_FIDO_HID_CMD_CBOR, request, sizeof(request),
                   response, sizeof(response), &response_len, TEST_LIT_100),
               "bad continuation sequence rejected");
+  /* INIT handshake (2) + send + receive-error: all four staging packets
+   * are still scrubbed. */
+  expect_true(
+      scrub_hook_calls_with_len(PCSC_FIDO_HID_PACKET_SIZE) == TEST_LIT_4U,
+      "staging packets scrubbed on receive failure");
+  expect_true(scrub_hook_all_zero(), "error-path scrubs left regions zeroed");
 }
 
 static void propagates_init_read_timeout(void) {

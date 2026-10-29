@@ -44,6 +44,28 @@ bool pcsc_fido_daemon_hid_is_cancel_packet(
          packet[PCSC_FIDO_HID_OFF_BCNTL] == 0u;
 }
 
+bool pcsc_fido_daemon_hid_is_init_packet(
+    const uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE], uint32_t cid) {
+  if (packet == PCSC_FIDO_NULL) {
+    return false;
+  }
+  return pcsc_fido_daemon_hid_packet_cid(packet) == cid &&
+         packet[PCSC_FIDO_HID_OFF_CMD] ==
+             (PCSC_FIDO_HID_TYPE_INIT | PCSC_FIDO_HID_CMD_INIT) &&
+         packet[PCSC_FIDO_HID_OFF_BCNTH] == 0u &&
+         packet[PCSC_FIDO_HID_OFF_BCNTL] == PCSC_FIDO_HID_INIT_NONCE_LEN;
+}
+
+bool pcsc_fido_daemon_hid_is_busy_answerable(
+    const uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE]) {
+  if (packet == PCSC_FIDO_NULL) {
+    return false;
+  }
+  return (packet[PCSC_FIDO_HID_OFF_CMD] & PCSC_FIDO_HID_TYPE_INIT) != 0u &&
+         packet[PCSC_FIDO_HID_OFF_CMD] !=
+             (PCSC_FIDO_HID_TYPE_INIT | PCSC_FIDO_HID_CMD_CANCEL);
+}
+
 bool pcsc_fido_daemon_hid_decode_init_header(
     const uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE], uint32_t* cid,
     uint8_t* cmd, size_t* payload_len) {

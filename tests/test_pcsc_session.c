@@ -24,6 +24,11 @@
 #include <string.h>
 #include "pcsc_fido/pcsc_log.h"
 
+enum {
+  /* pcsc-lite's SCardStatus reports the reader event count in bits 16..31. */
+  STATUS_EVENT_COUNT_ONE = 0x10000,
+};
+
 static int failures;
 
 static void expect_true(int condition, const char* message) {
@@ -59,9 +64,30 @@ static void verify_ready_tracks_card_presence(void) {
               "establish session");
   expect_true(pcsc_fido_session_verify_ready(err, sizeof(err)),
               "verify ready while present");
+  mock_pcsc_set_status_specific(true);
+  expect_true(pcsc_fido_session_verify_ready(err, sizeof(err)),
+              "verify ready while present with a negotiated protocol");
+  mock_pcsc_set_status_specific(false);
   mock_pcsc_set_card_present_immediately(false);
   expect_true(!pcsc_fido_session_verify_ready(err, sizeof(err)),
               "verify fails when card empty");
+  mock_pcsc_set_card_present_immediately(true);
+  mock_pcsc_set_status_state(SCARD_PRESENT);
+  expect_true(!pcsc_fido_session_verify_ready(err, sizeof(err)),
+              "an unpowered card is not usable");
+  mock_pcsc_set_status_state(SCARD_PRESENT | SCARD_SWALLOWED);
+  expect_true(!pcsc_fido_session_verify_ready(err, sizeof(err)),
+              "a swallowed card is not usable");
+  mock_pcsc_set_status_state(SCARD_PRESENT | SCARD_POWERED | SCARD_SPECIFIC);
+  expect_true(pcsc_fido_session_verify_ready(err, sizeof(err)),
+              "a powered card with a specific protocol is usable");
+  mock_pcsc_set_status_state((DWORD)STATUS_EVENT_COUNT_ONE | SCARD_PRESENT |
+                             SCARD_POWERED | SCARD_NEGOTIABLE);
+  expect_true(pcsc_fido_session_verify_ready(err, sizeof(err)),
+              "pcsc-lite's event counter in the high half is ignored");
+  mock_pcsc_set_status_state((DWORD)STATUS_EVENT_COUNT_ONE | SCARD_PRESENT);
+  expect_true(!pcsc_fido_session_verify_ready(err, sizeof(err)),
+              "an event counter does not make an unpowered card usable");
   pcsc_fido_session_reset();
 }
 

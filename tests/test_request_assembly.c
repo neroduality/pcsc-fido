@@ -16,17 +16,51 @@
 
 #include "test_caps.h"
 #include "pcsc_fido/ctaphid.h"
+#include "pcsc_fido/daemon_channels.h"
 #include "pcsc_fido/request_assembly.h"
 #include "pcsc_fido/uhid_transport.h"
 
+#include <limits.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 #include "pcsc_fido/mem_util.h"
+#include "pcsc_fido/pcsc_bridge_limits.h"
 #include "pcsc_fido/pcsc_log.h"
+#include "pcsc_fido/pcsc_util.h"
+#include "scrub_hook.h"
 
 extern uint32_t g_stub_last_error_cid;
 extern uint8_t g_stub_last_error_code;
 extern int g_stub_error_calls;
+
+enum {
+  OTHER_CID = 0x11223344u,
+  FAKE_MONOTONIC_START_SEC = 100,
+  /* Longer than the reassembly gap, so the gap is what the poll wait uses. */
+  POLL_CAP_LONGER_THAN_REASSEMBLY_MS =
+      PCSC_FIDO_DAEMON_REASSEMBLY_TIMEOUT_MS + PCSC_FIDO_UHID_POLL_TIMEOUT_MS,
+  /* poll(2) infinite wait; the reassembly gap must still bound it. */
+  NEGATIVE_POLL_CAP_MS = -1,
+};
+
+static time_t g_fake_monotonic_sec = FAKE_MONOTONIC_START_SEC;
+static bool g_monotonic_fail;
+
+extern int __real_clock_gettime(clockid_t clock_id, struct timespec* ts);
+
+int __wrap_clock_gettime(clockid_t clock_id, struct timespec* ts) {
+  if (clock_id != CLOCK_MONOTONIC || ts == PCSC_FIDO_NULL) {
+    return __real_clock_gettime(clock_id, ts);
+  }
+  if (g_monotonic_fail) {
+    return -1;
+  }
+  ts->tv_sec = g_fake_monotonic_sec;
+  ts->tv_nsec = 0;
+  return 0;
+}
 
 static int failures;
 static int handled_calls;
@@ -59,6 +93,7 @@ static void single_packet_request(void) {
   const uint8_t payload[] = {0x04u};
   handled_calls = 0;
   pcsc_fido_daemon_pending_request_reset(&pending);
+  scrub_hook_reset();
   expect_true(
       pcsc_fido_hid_encode_init_packet(TEST_CID, PCSC_FIDO_HID_CMD_CBOR,
                                        payload, sizeof(payload), packet),
@@ -71,6 +106,9 @@ static void single_packet_request(void) {
               "single packet request completed");
   expect_true(handled_payload_head == TEST_LIT_0X04U,
               "single packet payload preserved");
+  expect_true(scrub_hook_calls_with_len(sizeof(pending)) == TEST_LIT_2U,
+              "INIT start and complete_request each wipe the pending struct");
+  expect_true(scrub_hook_all_zero(), "pending scrubs left the region zeroed");
 }
 
 static void multi_packet_request(void) {
@@ -125,12 +163,19 @@ static void rejects_bad_sequence(void) {
                   TEST_CID, 1u, request + PCSC_FIDO_HID_INIT_PAYLOAD_MAX,
                   sizeof(request) - PCSC_FIDO_HID_INIT_PAYLOAD_MAX, bad_cont),
               "encode bad continuation");
+  scrub_hook_reset();
   expect_true(pcsc_fido_daemon_request_assembler_feed(
                   -1, &pending, bad_cont, handle_request, PCSC_FIDO_NULL),
               "bad continuation handled");
   expect_true(g_stub_error_calls == 1u &&
                   g_stub_last_error_code == PCSC_FIDO_DAEMON_ERR_INVALID_SEQ,
               "invalid sequence returns error");
+  expect_true(!pending.active && pending.cid == 0u,
+              "bad sequence wipes pending state");
+  expect_true(scrub_hook_calls_with_len(sizeof(pending)) == 1u,
+              "bad sequence wipes the pending struct once");
+  expect_true(scrub_hook_all_zero(),
+              "bad-sequence scrub left the region zeroed");
 }
 
 static void rejects_oversized_expected(void) {
@@ -181,8 +226,8 @@ static void rejects_unframable_expected(void) {
   expect_true(g_stub_error_calls == 1u &&
                   g_stub_last_error_code == PCSC_FIDO_DAEMON_ERR_INVALID_LEN,
               "unframable expected returns INVALID_LEN");
-  expect_true(handled_calls == 0u && !pending.active,
-              "unframable expected does not invoke handler");
+  expect_true(handled_calls == 0u && !pending.active && pending.cid == 0u,
+              "unframable expected does not invoke handler and wipes pending");
 }
 
 static void rejects_null_arguments(void) {
@@ -287,6 +332,235 @@ static void partial_request_reset_wipes_payload(void) {
   expect_true(!pending.active, "shutdown reset clears active flag");
 }
 
+/* Starts an 80-byte request on TEST_CID that still needs one continuation. */
+static void start_partial_request(pcsc_fido_daemon_pending_request_t* pending,
+                                  uint8_t request[TEST_LIT_80]) {
+  uint8_t init[PCSC_FIDO_HID_PACKET_SIZE];
+  handled_calls = 0;
+  g_stub_error_calls = 0;
+  pcsc_fido_fill_bytes(request, TEST_LIT_80, (uint8_t)TEST_LIT_0XA5);
+  pcsc_fido_daemon_pending_request_reset(pending);
+  expect_true(pcsc_fido_hid_encode_init_packet(
+                  TEST_CID, PCSC_FIDO_HID_CMD_CBOR, request,
+                  PCSC_FIDO_HID_INIT_PAYLOAD_MAX, init),
+              "encode partial init packet");
+  init[TEST_LIT_5] = 0u;
+  init[TEST_LIT_6] = TEST_LIT_80;
+  expect_true(pcsc_fido_daemon_request_assembler_feed(
+                  -1, pending, init, handle_request, PCSC_FIDO_NULL),
+              "partial init accepted");
+}
+
+static void finish_partial_request(pcsc_fido_daemon_pending_request_t* pending,
+                                   const uint8_t request[TEST_LIT_80]) {
+  uint8_t cont[PCSC_FIDO_HID_PACKET_SIZE];
+  expect_true(pcsc_fido_hid_encode_cont_packet(
+                  TEST_CID, 0u, request + PCSC_FIDO_HID_INIT_PAYLOAD_MAX,
+                  TEST_LIT_80 - PCSC_FIDO_HID_INIT_PAYLOAD_MAX, cont),
+              "encode continuation packet");
+  expect_true(pcsc_fido_daemon_request_assembler_feed(
+                  -1, pending, cont, handle_request, PCSC_FIDO_NULL),
+              "continuation accepted");
+}
+
+static void other_channel_init_is_busy_and_keeps_request(void) {
+  pcsc_fido_daemon_pending_request_t pending;
+  uint8_t request[TEST_LIT_80];
+  uint8_t other[PCSC_FIDO_HID_PACKET_SIZE];
+  const uint8_t nonce[PCSC_FIDO_HID_INIT_NONCE_LEN] = {0u};
+  start_partial_request(&pending, request);
+  expect_true(pcsc_fido_hid_encode_init_packet(PCSC_FIDO_HID_BROADCAST_CID,
+                                               PCSC_FIDO_HID_CMD_INIT, nonce,
+                                               sizeof(nonce), other),
+              "encode other-channel INIT");
+  expect_true(pcsc_fido_daemon_request_assembler_feed(
+                  -1, &pending, other, handle_request, PCSC_FIDO_NULL),
+              "other-channel INIT handled");
+  expect_true(g_stub_error_calls == 1 &&
+                  g_stub_last_error_cid == PCSC_FIDO_HID_BROADCAST_CID &&
+                  g_stub_last_error_code == PCSC_FIDO_DAEMON_ERR_CHANNEL_BUSY,
+              "other-channel INIT gets CHANNEL_BUSY");
+  expect_true(pending.active && pending.cid == TEST_CID,
+              "other-channel INIT leaves the pending request intact");
+  finish_partial_request(&pending, request);
+  expect_true(handled_calls == 1 && handled_cid == TEST_CID &&
+                  handled_len == TEST_LIT_80,
+              "interrupted request still completes");
+}
+
+static void other_channel_continuation_is_dropped(void) {
+  pcsc_fido_daemon_pending_request_t pending;
+  uint8_t request[TEST_LIT_80];
+  uint8_t other[PCSC_FIDO_HID_PACKET_SIZE];
+  start_partial_request(&pending, request);
+  expect_true(pcsc_fido_hid_encode_cont_packet(OTHER_CID, 0u, request,
+                                               TEST_LIT_5, other),
+              "encode other-channel continuation");
+  expect_true(pcsc_fido_daemon_request_assembler_feed(
+                  -1, &pending, other, handle_request, PCSC_FIDO_NULL),
+              "other-channel continuation handled");
+  expect_true(g_stub_error_calls == 0,
+              "other-channel continuation gets no reply");
+  finish_partial_request(&pending, request);
+  expect_true(handled_calls == 1 && handled_len == TEST_LIT_80,
+              "request completes after the other-channel frame");
+}
+
+static void other_channel_cancel_is_dropped(void) {
+  pcsc_fido_daemon_pending_request_t pending;
+  uint8_t request[TEST_LIT_80];
+  uint8_t other[PCSC_FIDO_HID_PACKET_SIZE];
+  start_partial_request(&pending, request);
+  expect_true(
+      pcsc_fido_hid_encode_init_packet(OTHER_CID, PCSC_FIDO_HID_CMD_CANCEL,
+                                       PCSC_FIDO_NULL, 0u, other),
+      "encode other-channel CANCEL");
+  expect_true(pcsc_fido_daemon_request_assembler_feed(
+                  -1, &pending, other, handle_request, PCSC_FIDO_NULL),
+              "other-channel CANCEL handled");
+  expect_true(g_stub_error_calls == 0, "other-channel CANCEL gets no reply");
+  expect_true(pending.active && pending.cid == TEST_CID,
+              "other-channel CANCEL leaves the pending request intact");
+  finish_partial_request(&pending, request);
+  expect_true(handled_calls == 1 && handled_len == TEST_LIT_80,
+              "request completes after the other-channel CANCEL");
+}
+
+static void stray_continuation_is_ignored(void) {
+  pcsc_fido_daemon_pending_request_t pending;
+  uint8_t cont[PCSC_FIDO_HID_PACKET_SIZE];
+  const uint8_t data[TEST_LIT_5] = {0u};
+  handled_calls = 0;
+  g_stub_error_calls = 0;
+  pcsc_fido_daemon_pending_request_reset(&pending);
+  expect_true(
+      pcsc_fido_hid_encode_cont_packet(TEST_CID, 0u, data, sizeof(data), cont),
+      "encode stray continuation");
+  expect_true(pcsc_fido_daemon_request_assembler_feed(
+                  -1, &pending, cont, handle_request, PCSC_FIDO_NULL),
+              "stray continuation handled");
+  expect_true(g_stub_error_calls == 0 && handled_calls == 0 && !pending.active,
+              "stray continuation is ignored without an error");
+}
+
+static void stalled_request_expires_without_another_packet(void) {
+  pcsc_fido_daemon_pending_request_t pending;
+  uint8_t request[TEST_LIT_80];
+  start_partial_request(&pending, request);
+  expect_true(pcsc_fido_daemon_pending_request_poll_timeout_ms(
+                  &pending, POLL_CAP_LONGER_THAN_REASSEMBLY_MS) ==
+                  PCSC_FIDO_DAEMON_REASSEMBLY_TIMEOUT_MS,
+              "poll waits only for the remaining reassembly gap");
+  expect_true(pcsc_fido_daemon_pending_request_poll_timeout_ms(
+                  &pending, PCSC_FIDO_UHID_POLL_TIMEOUT_MS) ==
+                  PCSC_FIDO_UHID_POLL_TIMEOUT_MS,
+              "a shorter poll cap is kept");
+  expect_true(
+      pcsc_fido_daemon_pending_request_poll_timeout_ms(&pending, 0) == 0,
+      "a zero poll cap does not wait");
+  expect_true(pcsc_fido_daemon_pending_request_poll_timeout_ms(
+                  &pending, NEGATIVE_POLL_CAP_MS) ==
+                  PCSC_FIDO_DAEMON_REASSEMBLY_TIMEOUT_MS,
+              "an unbounded poll wait is still capped to the reassembly gap");
+  expect_true(!pcsc_fido_daemon_pending_request_expire(-1, &pending),
+              "the request is still inside the reassembly gap");
+  expect_true(g_stub_error_calls == 0, "no timeout error before the gap");
+  g_fake_monotonic_sec += (time_t)(PCSC_FIDO_DAEMON_REASSEMBLY_TIMEOUT_MS /
+                                   PCSC_FIDO_UTIL_MS_PER_SEC) +
+                          1;
+  expect_true(pcsc_fido_daemon_pending_request_expire(-1, &pending),
+              "the stalled request expires with no following packet");
+  expect_true(g_stub_error_calls == 1 && g_stub_last_error_cid == TEST_CID &&
+                  g_stub_last_error_code == PCSC_FIDO_DAEMON_ERR_MSG_TIMEOUT,
+              "the stalled sender gets ERR_MSG_TIMEOUT from the poll loop");
+  expect_true(!pending.active, "the timed-out request is dropped");
+  expect_true(!pcsc_fido_daemon_pending_request_expire(-1, &pending),
+              "a second expiry has nothing left to drop");
+  expect_true(g_stub_error_calls == 1, "the timeout error is sent once");
+  expect_true(pcsc_fido_daemon_pending_request_poll_timeout_ms(
+                  &pending, PCSC_FIDO_UHID_POLL_TIMEOUT_MS) ==
+                  PCSC_FIDO_UHID_POLL_TIMEOUT_MS,
+              "an idle reassembly buffer does not shorten the poll wait");
+}
+
+static void stalled_request_times_out(void) {
+  pcsc_fido_daemon_pending_request_t pending;
+  uint8_t request[TEST_LIT_80];
+  uint8_t other[PCSC_FIDO_HID_PACKET_SIZE];
+  const uint8_t payload[] = {0x04u};
+  start_partial_request(&pending, request);
+  g_fake_monotonic_sec += (time_t)(PCSC_FIDO_DAEMON_REASSEMBLY_TIMEOUT_MS /
+                                   PCSC_FIDO_UTIL_MS_PER_SEC) +
+                          1;
+  expect_true(
+      pcsc_fido_hid_encode_init_packet(OTHER_CID, PCSC_FIDO_HID_CMD_CBOR,
+                                       payload, sizeof(payload), other),
+      "encode other-channel request");
+  expect_true(pcsc_fido_daemon_request_assembler_feed(
+                  -1, &pending, other, handle_request, PCSC_FIDO_NULL),
+              "request after timeout handled");
+  expect_true(g_stub_error_calls == 1 && g_stub_last_error_cid == TEST_CID &&
+                  g_stub_last_error_code == PCSC_FIDO_DAEMON_ERR_MSG_TIMEOUT,
+              "stalled sender gets ERR_MSG_TIMEOUT");
+  expect_true(handled_calls == 1 && handled_cid == OTHER_CID,
+              "other channel is served once the stalled request expires");
+}
+
+static void clock_failure_times_out_partial_request(void) {
+  pcsc_fido_daemon_pending_request_t pending;
+  uint8_t request[TEST_LIT_80];
+  uint8_t other[PCSC_FIDO_HID_PACKET_SIZE];
+  const uint8_t payload[] = {0x04u};
+  g_monotonic_fail = false;
+  start_partial_request(&pending, request);
+  g_monotonic_fail = true;
+  expect_true(
+      pcsc_fido_hid_encode_init_packet(OTHER_CID, PCSC_FIDO_HID_CMD_CBOR,
+                                       payload, sizeof(payload), other),
+      "encode request seen while the clock is down");
+  expect_true(pcsc_fido_daemon_request_assembler_feed(
+                  -1, &pending, other, handle_request, PCSC_FIDO_NULL),
+              "request during a clock failure handled");
+  expect_true(g_stub_error_calls == 1 && g_stub_last_error_cid == TEST_CID &&
+                  g_stub_last_error_code == PCSC_FIDO_DAEMON_ERR_MSG_TIMEOUT,
+              "a failed monotonic clock expires the stalled request");
+  g_monotonic_fail = false;
+}
+
+static void clock_failure_while_arming_still_times_out(void) {
+  pcsc_fido_daemon_pending_request_t pending;
+  uint8_t request[TEST_LIT_80];
+  uint8_t other[PCSC_FIDO_HID_PACKET_SIZE];
+  const uint8_t payload[] = {0x04u};
+  g_monotonic_fail = true;
+  start_partial_request(&pending, request);
+  g_monotonic_fail = false;
+  expect_true(
+      pcsc_fido_hid_encode_init_packet(OTHER_CID, PCSC_FIDO_HID_CMD_CBOR,
+                                       payload, sizeof(payload), other),
+      "encode request after the clock recovers");
+  expect_true(pcsc_fido_daemon_request_assembler_feed(
+                  -1, &pending, other, handle_request, PCSC_FIDO_NULL),
+              "request after a recovered clock handled");
+  expect_true(g_stub_error_calls == 1 && g_stub_last_error_cid == TEST_CID &&
+                  g_stub_last_error_code == PCSC_FIDO_DAEMON_ERR_MSG_TIMEOUT,
+              "a deadline armed during a clock failure has already passed");
+}
+
+static void overflowed_deadline_has_already_passed(void) {
+  const time_t room =
+      (time_t)LONG_MAX - (time_t)PCSC_FIDO_DAEMON_SESSION_IDLE_SEC;
+  expect_true(pcsc_fido_add_seconds_saturating(
+                  room, PCSC_FIDO_DAEMON_SESSION_IDLE_SEC) == (time_t)LONG_MAX,
+              "a deadline that lands on the clock limit is kept");
+  expect_true(pcsc_fido_add_seconds_saturating(
+                  room, PCSC_FIDO_DAEMON_SESSION_IDLE_SEC + 1u) == 0,
+              "a deadline that would pass the clock limit has already passed");
+  expect_true(pcsc_fido_add_seconds_saturating(
+                  (time_t)LONG_MAX, PCSC_FIDO_DAEMON_SESSION_IDLE_SEC) == 0,
+              "a failed clock does not arm a deadline");
+}
+
 int main(void) {
   single_packet_request();
   multi_packet_request();
@@ -298,5 +572,14 @@ int main(void) {
   reset_wipes_full_payload();
   completed_request_scrubs_pending();
   partial_request_reset_wipes_payload();
+  other_channel_init_is_busy_and_keeps_request();
+  other_channel_continuation_is_dropped();
+  other_channel_cancel_is_dropped();
+  stray_continuation_is_ignored();
+  stalled_request_expires_without_another_packet();
+  stalled_request_times_out();
+  clock_failure_times_out_partial_request();
+  clock_failure_while_arming_still_times_out();
+  overflowed_deadline_has_already_passed();
   return failures == 0 ? 0 : 1;
 }

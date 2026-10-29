@@ -68,6 +68,11 @@ bool pcsc_fido_apdu_transmit_chained_cancel(
     size_t* rapdu_len, char* err, size_t err_cap) {
   uint8_t chunk[PCSC_FIDO_APDU_CHAIN_MAX_RESPONSE];
   size_t chunk_len = 0u;
+  /* chunk accumulates raw card responses -- for CBOR exchanges the full CTAP2
+   * response plaintext, including authenticatorClientPIN token / keyAgreement
+   * material. Scope-exit scrub so it does not linger on the worker-thread
+   * stack, matching the invariant applied to capdu/rapdu/job. */
+  PCSC_FIDO_SCRUB_ON_EXIT(chunk, sizeof(chunk));
   size_t out_len = 0u;
   uint8_t get_response[PCSC_FIDO_APDU_GET_RESPONSE_LEN] = {
       PCSC_FIDO_APDU_CLA_ISO, PCSC_FIDO_APDU_INS_GET_RESPONSE,
@@ -130,11 +135,6 @@ bool pcsc_fido_apdu_transmit_chained_cancel(
   ok = true;
 
 done:
-  /* chunk accumulates raw card responses -- for CBOR exchanges the full CTAP2
-   * response plaintext, including authenticatorClientPIN token / keyAgreement
-   * material. Scrub it on every exit so it does not linger on the worker-thread
-   * stack, matching the secure_clear invariant applied to capdu/rapdu/job. */
-  pcsc_fido_secure_clear(chunk, sizeof(chunk));
   return ok;
 }
 

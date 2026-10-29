@@ -29,7 +29,14 @@ fi
 if command -v apt-get >/dev/null 2>&1; then
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
+  # clang-tools → clang-NN for scan-build; skip `clang` metapackage (dumpmachine vs cc).
+  # llvm-ar-N / llvm-ranlib-N are in llvm-N. llvm-N-linker-tools is the gold
+  # LTO plugin only, so CheckIPOSupported under ccc-analyzer has no archiver.
   apt-get install -y --no-install-recommends ca-certificates git util-linux clang-tools
+  scan_build_path="$(readlink -f -- "$(command -v scan-build)")"
+  if [[ ${scan_build_path} =~ scan-build-([0-9]+) ]]; then
+    apt-get install -y --no-install-recommends "llvm-${BASH_REMATCH[1]}"
+  fi
 elif command -v dnf >/dev/null 2>&1; then
   dnf install -y --setopt=install_weak_deps=False ca-certificates git util-linux clang-analyzer
   dnf clean all

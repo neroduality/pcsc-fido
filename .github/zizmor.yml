@@ -15,4 +15,12 @@
 # limitations under the License.
 
 
-rules: {}
+rules:
+  # zizmor >= 1.30 recommends GitHub's `uses: $/...` self-repository syntax for
+  # the in-repo reusable workflow call in release.yml. actionlint (1.7.12, the
+  # latest release) still rejects that form ("not following the format ..."),
+  # and both tools gate the same suite. Keep the workspace-relative `./` call
+  # until actionlint accepts `$/`, then drop this ignore and switch the call.
+  self-repository:
+    ignore:
+      - release.yml

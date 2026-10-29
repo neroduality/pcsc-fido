@@ -15,14 +15,11 @@
 # limitations under the License.
 
 # OSV.dev dependency vulnerability scans (lockfiles / manifests).
-# Runs on schedule only (plus workflow_dispatch). Local: .github/scripts/run-local-osv-scanner.sh
+# Manual only (workflow_dispatch). Local: .github/scripts/run-local-osv-scanner.sh
 # Reusable workflow: https://google.github.io/osv-scanner/github-action/
 name: OSV-Scanner
 
 on:
-  schedule:
-    # Quarterly -- 1st of Jan/Apr/Jul/Oct at 14:45 UTC.
-    - cron: "45 14 1 1,4,7,10 *"
   workflow_dispatch:
 
 permissions:
@@ -38,4 +35,4 @@ jobs:
       actions: read
       security-events: write
       contents: read
-    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@8deb546fdb875b9996d27d4950be7312dac076a1 # v2.5.0
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@b1d267aea5211fa648d9d442fa64b90dbdcbdd36 # v2.7.0

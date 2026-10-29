@@ -14,9 +14,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Syft SBOM configuration -- keep SBOMs focused on maintained sources (exclude CI/build trees).
+# Syft SBOM configuration. Build trees and the pinned CI tools under
+# .github/pinned are not components of the daemon.
 
 exclude:
   - "./build/**"
   - "./dist/**"
   - "./scan-build-report/**"
+  - "./.github/pinned/**"

@@ -21,6 +21,7 @@
 #include <string.h>
 #include "pcsc_fido/mem_util.h"
 #include "pcsc_fido/pcsc_log.h"
+#include "scrub_hook.h"
 
 enum {
   TEST_LIT_0X10U = 0x10u,
@@ -123,10 +124,15 @@ static void chains_get_response(void) {
   mock.responses[1] = chunk2;
   mock.response_lens[1] = sizeof(chunk2);
   mock.response_count = TEST_LIT_2U;
+  scrub_hook_reset();
   expect_true(pcsc_fido_apdu_transmit_chained(
                   &mock, mock_transmit, capdu, sizeof(capdu), rapdu,
                   sizeof(rapdu), &rapdu_len, err, sizeof(err)),
               "chained transmit succeeds");
+  expect_true(
+      scrub_hook_calls_with_len(PCSC_FIDO_APDU_CHAIN_MAX_RESPONSE) == 1u,
+      "chain accumulation chunk scrubbed after success");
+  expect_true(scrub_hook_all_zero(), "chunk scrub left region zeroed");
   expect_true(rapdu_len == TEST_LIT_4U && rapdu[0] == TEST_LIT_0XAAU &&
                   rapdu[1] == TEST_LIT_0XBBU &&
                   rapdu[TEST_SOCKETPAIR_FDS] == TEST_LIT_0X90U &&
@@ -247,10 +253,16 @@ static void rejects_initial_transmit_failure(void) {
   uint8_t rapdu[TEST_LIT_8];
   size_t rapdu_len = 0u;
   char err[TEST_LIT_64];
+  scrub_hook_reset();
   expect_true(!pcsc_fido_apdu_transmit_chained(
                   PCSC_FIDO_NULL, failing_transmit, capdu, sizeof(capdu), rapdu,
                   sizeof(rapdu), &rapdu_len, err, sizeof(err)),
               "initial transmit failure propagated");
+  expect_true(
+      scrub_hook_calls_with_len(PCSC_FIDO_APDU_CHAIN_MAX_RESPONSE) == 1u,
+      "chain chunk scrubbed on transmit failure");
+  expect_true(scrub_hook_all_zero(),
+              "error-path chunk scrub left region zeroed");
 }
 
 static void rejects_final_response_missing_status_word(void) {

@@ -17,44 +17,42 @@ limitations under the License.
 
 # Ecosystem
 
-Where `pcsc-fido` fits among related Linux OSS.
+## Why a bridge (October 2026)
 
-## Why Linux needs a bridge (for now) - May 2026
+Linux browsers (Firefox, Chrome, Brave) do WebAuthn only as CTAPHID over `/dev/hidraw*`. They never use PC/SC, so NFC security keys (NFC FIDO cards and NFC-enabled security keys) are invisible to them. libfido2 clients (`fido2-token`, OpenSSH `sk-*`) can use NFC over PC/SC directly.
 
-On Linux, browsers such as Firefox, Chrome, or Brave use **CTAPHID** over **`/dev/hidraw*`**, not PC/SC, for WebAuthn. **`fido2-token`**, OpenSSH **`sk-*`**, and other **libfido2** clients can use PC/SC NFC directly; **unmodified browser tabs do not**. Windows integrates NFC FIDO into its platform WebAuthn stack; macOS exposes platform WebAuthn (USB security keys plus Touch ID) but does not natively support NFC FIDO security keys; mainstream Linux integrates neither yet -- the [Credentials for Linux](https://github.com/linux-credentials) stack is the emerging path (its `libwebauthn` already speaks NFC over PC/SC; browser/portal adoption is the remaining gap).
+Windows supports NFC FIDO natively. macOS does not. On Linux the [Credentials for Linux](https://github.com/linux-credentials) stack is the likely fix; its `libwebauthn` already does NFC over PC/SC, and browser/portal adoption is what remains.
 
 ## Related projects
 
-Links are pointers, not endorsements.
+Listed for reference, not endorsement.
 
-### Same problem -- browser WebAuthn over PC/SC NFC
+### Browser WebAuthn over PC/SC NFC
 
-All rely on [Below the bridge](#below-the-bridge-host-pcsc-stack).
+| Project | Lang | Browser transport | Runs as | Notes |
+| ------- | ---- | ----------------- | ------- | ----- |
+| [fido2-hid-bridge](https://github.com/BryanJacobs/fido2-hid-bridge) | Python | `/dev/uhid` | root | Manual install, no udev rules. |
+| [cryptnox-fido2-bridge](https://github.com/cryptnox/cryptnox-fido2-bridge) | Python | `/dev/uhid` | root | Fork of fido2-hid-bridge. Manual install, no shipped udev rules. |
+| [CTAP-bridge](https://github.com/StarGate01/CTAP-bridge) | Python | USB gadget (`configfs`) | root | Optional CCID composite (`-c`) needs out-of-tree [`f_ccid`](https://gist.github.com/caj380/2de5b9a41797663fdac72e0bdebd9d6c), absent from stock Fedora/Debian kernels ([libfido2 #626](https://github.com/Yubico/libfido2/discussions/626)). |
+| **pcsc-fido** | C | `/dev/uhid` | `pcsc-fido` user | `.rpm`/`.deb`, systemd, udev, polkit. |
 
-| Project | Transport to browser | Priv | Notes |
-| ------- | -------------------- | ---- | ----- |
-| [fido2-hid-bridge](https://github.com/BryanJacobs/fido2-hid-bridge) | **`/dev/uhid`** | **root** | Python -- UHID relay; manual install; no udev (typical **`sudo`**); stock **`uhid`** |
-| [cryptnox-fido2-bridge](https://github.com/cryptnox/cryptnox-fido2-bridge) | **`/dev/uhid`** | **root** | Python -- UHID relay; based on fido2-hid-bridge by Bryan Jacobs (adapted/extended by Cryptnox); manual install; no shipped udev (typical **`sudo`**; optional DIY udev); stock **`uhid`** |
-| [CTAP-bridge](https://github.com/StarGate01/CTAP-bridge) | USB gadget (`configfs`) | **root** | Python -- USB gadget relay (not UHID); configfs/gadget modules; udev for emulated device; optional composite CCID (`-c`) depends on out-of-tree [`f_ccid`](https://gist.github.com/caj380/2de5b9a41797663fdac72e0bdebd9d6c) -- not in stock Fedora/Debian kernels ([libfido2 #626](https://github.com/Yubico/libfido2/discussions/626)) |
-| **pcsc-fido** (this repo) | **`/dev/uhid`** | **lower** | C -- UHID relay; packaged `.rpm`/`.deb`, systemd, udev; **`pcsc-fido`** user + polkit; stock **`uhid`** |
-
-### Adjacent -- different consumer
+### Other consumers
 
 | Project | Notes |
 | ------- | ----- |
-| [libfido2](https://github.com/Yubico/libfido2) / **`fido2-token`** | C -- FIDO2/U2F library and CLI; PC/SC NFC transport (compile-time `USE_PCSC`, **on** by default in current upstream libfido2 (v1.18) though still labeled "experimental" in its CMake option) for apps, not unmodified browser WebAuthn |
-| [libwebauthn](https://github.com/linux-credentials/libwebauthn) / [credentialsd](https://github.com/linux-credentials/credentialsd) | Rust -- platform credential stack / portal direction. `libwebauthn` implements NFC over PC/SC (via the `nfc-backend-pcsc` Cargo feature) for FIDO2 and U2F; `credentialsd` is a D-Bus credential service. Today a browser extension (`navigator.credentials` override) wires Firefox 140+ and Chromium/Edge 111+ to `credentialsd` (currently scoped to test origins such as `webauthn.io` and `demo.yubico.com`); an experimental patched Firefox build talks to it natively. Running `credentialsd` currently also depends on a patched `xdg-desktop-portal` fork. No browser has upstreamed native portal support yet. Reduces the need for a browser relay as adoption lands. |
-| [FIDO2Applet](https://github.com/BryanJacobs/FIDO2Applet) | Java (JavaCard) -- token firmware; PC/SC-only; browsers on Linux still need a CTAPHID bridge |
-| [VirtualWebAuthn](https://github.com/UoS-SCCS/VirtualWebAuthn) | Python -- software virtual authenticator (research); not a PC/SC relay |
-| [fidorium](https://github.com/edg-l/fidorium) | Rust -- software virtual authenticator (TPM-backed); not a PC/SC relay |
+| [libfido2](https://github.com/Yubico/libfido2) / `fido2-token` | C library and CLI. PC/SC NFC (`USE_PCSC`) is on by default in v1.18, still labelled experimental. For apps, not browsers. |
+| [libwebauthn](https://github.com/linux-credentials/libwebauthn) / [credentialsd](https://github.com/linux-credentials/credentialsd) | Rust platform credential stack. `libwebauthn` does FIDO2/U2F over PC/SC NFC (`nfc-backend-pcsc` feature). `credentialsd` is a D-Bus service; today it needs a patched `xdg-desktop-portal` and reaches browsers via an extension (Firefox 140+, Chromium/Edge 111+; documented for test origins such as `webauthn.io`) or an experimental patched Firefox Flatpak. No browser supports it upstream yet. |
+| [FIDO2Applet](https://github.com/BryanJacobs/FIDO2Applet) | JavaCard FIDO2 applet. PC/SC only; Linux browsers still need a bridge. |
+| [VirtualWebAuthn](https://github.com/UoS-SCCS/VirtualWebAuthn) | Python software authenticator (research). Not a PC/SC relay. |
+| [fidorium](https://github.com/edg-l/fidorium) | Rust software authenticator (TPM-backed). Not a PC/SC relay. |
 
-### Below the bridge (host PC/SC stack)
+### Host PC/SC stack
 
-Runtime requirements for the relays above (and for libfido2 PC/SC clients). They rely on **`pcscd`** plus a CCID IFD driver -- **`libccid`** on most Fedora/Debian setups; a vendor IFD can substitute for some readers.
+Required by every PC/SC relay above and by libfido2 PC/SC clients.
 
-| Component | Notes |
-| --------- | ----- |
-| [pcsc-lite](https://sources.debian.org/src/pcsc-lite/) (Debian **`pcsc-lite`** / Fedora **`pcsc-lite`**) | C -- **`pcscd`**, **`libpcsclite`** (required) |
-| [ccid](https://sources.debian.org/src/ccid/) (Debian **`libccid`** / Fedora **`pcsc-lite-ccid`**) | C -- USB CCID IFD driver for common readers (required on typical hardware) |
+| Component | Packages | Role |
+| --------- | -------- | ---- |
+| [pcsc-lite](https://sources.debian.org/src/pcsc-lite/) | Debian `pcscd`, `libpcsclite1`; Fedora `pcsc-lite` | `pcscd` daemon and `libpcsclite` |
+| [ccid](https://sources.debian.org/src/ccid/) | Debian `libccid`; Fedora `pcsc-lite-ccid` | USB CCID reader driver (some readers use a vendor driver) |
 
-Corrections and additions welcome via issue or PR -- the landscape changes.
+Corrections welcome via issue or PR.

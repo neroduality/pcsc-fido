@@ -38,7 +38,7 @@ PCSC_FIDO_NODISCARD bool pcsc_fido_session_verify_ready(char* err,
 PCSC_FIDO_NODISCARD bool pcsc_fido_session_snapshot_tx(
     pcsc_fido_session_tx_t* tx, char* err, size_t err_cap);
 PCSC_FIDO_NODISCARD bool pcsc_fido_session_tx_is_current(
-    const pcsc_fido_session_tx_t* tx) PCSC_FIDO_UNSEQUENCED;
+    const pcsc_fido_session_tx_t* tx);
 PCSC_FIDO_NODISCARD SCARDCONTEXT pcsc_fido_session_snapshot_context(void);
 
 void pcsc_fido_session_reset(void);

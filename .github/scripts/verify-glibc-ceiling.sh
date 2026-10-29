@@ -62,17 +62,31 @@ if ! command -v readelf >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! verneed="$(readelf -V "${binary}" 2>/dev/null)" ||
+  ! dynsyms="$(readelf -W --dyn-syms "${binary}" 2>/dev/null)"; then
+  printf 'error: readelf cannot read %s (not an ELF file?)\n' "${binary}" >&2
+  exit 1
+fi
+version_refs="${verneed}"$'\n'"${dynsyms}"
+
+# GLIBC_ABI_DT_RELR is a verneed entry with a non-numeric version name that
+# DT_RELR (-z pack-relative-relocs) binaries carry. Map it to 2.36 so a future lower ceiling would reject those
+# binaries. Today's floors (deb 2.41 / rpm 2.37) are already above 2.36; the
+# loader floor is enforced by HAVE_LIBC_DT_RELR + verify-release-elf-hardening.sh.
 mapfile -t versions < <(
   {
-    readelf -V "${binary}" 2>/dev/null || true
-    readelf -W --dyn-syms "${binary}" 2>/dev/null || true
-  } | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' | sed 's/^GLIBC_//' | sort -Vu
+    grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' <<<"${version_refs}" | sed 's/^GLIBC_//'
+    if grep -q 'GLIBC_ABI_DT_RELR' <<<"${version_refs}"; then
+      printf '2.36\n'
+    fi
+  } | sort -Vu
 )
 
+# The daemon is always dynamically linked against glibc, so no references
+# means the wrong file (or a truncated one), not a binary that passes.
 if [[ ${#versions[@]} -eq 0 ]]; then
-  printf 'glibc ceiling verify: OK (%s; no GLIBC_* refs; ceiling %s)\n' \
-    "${binary}" "${ceiling}"
-  exit 0
+  printf 'error: %s has no GLIBC_* version references\n' "${binary}" >&2
+  exit 1
 fi
 
 max_needed="${versions[-1]}"

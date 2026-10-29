@@ -36,10 +36,27 @@ static void short_sleep(void) {
   pcsc_fido_sleep_ms((long)PCSC_FIDO_READER_STATUS_POLL_MS);
 }
 
+static bool reader_can_arm(const char* name) {
+  size_t name_len = 0u;
+  const char* needle;
+  if (!pcsc_fido_bounded_strlen(name, PCSC_FIDO_READER_NAME_MAX, &name_len)) {
+    return false;
+  }
+  if (pcsc_fido_reader_name_is_sam_slot_len(name, name_len)) {
+    return false;
+  }
+  needle = pcsc_fido_reader_env_needle(PCSC_FIDO_NULL);
+  return needle == PCSC_FIDO_NULL || needle[0] == '\0' ||
+         pcsc_fido_reader_name_contains_ci(name, needle);
+}
+
 static bool any_eligible_card_present(
     const SCARD_READERSTATE states[PCSC_FIDO_BRIDGE_MAX_READERS],
     size_t count) {
   for (size_t i = 0u; i < count; i++) {
+    if (!reader_can_arm(states[i].szReader)) {
+      continue;
+    }
     if (pcsc_fido_reader_state_has_card(
             (const pcsc_fido_reader_state_t*)&states[i])) {
       return true;

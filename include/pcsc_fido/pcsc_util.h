@@ -30,14 +30,34 @@ enum {
 
 static inline time_t pcsc_fido_add_seconds_saturating(time_t base,
                                                       unsigned seconds) {
-  if (base > (time_t)(LONG_MAX - (long)seconds)) {
-    return (time_t)LONG_MAX;
+  /* A failed clock is LONG_MAX (or negative). A sum past LONG_MAX is the
+   * same class of deadline: storing LONG_MAX would not expire. Both read
+   * as already passed. The comparison stays in unsigned long so a large
+   * `seconds` is not cast to a possibly-negative long. */
+  if (base < 0 || base == (time_t)LONG_MAX) {
+    return 0;
+  }
+  if ((unsigned long)seconds > (unsigned long)LONG_MAX - (unsigned long)base) {
+    return 0;
   }
   return base + (time_t)seconds;
 }
 
+/* Seconds on CLOCK_MONOTONIC, so deadlines and rate windows are immune to
+ * wall-clock steps (NTP corrections, manual changes). On failure, or a
+ * negative reading, returns LONG_MAX, which reads as every deadline having
+ * passed (fail closed). */
+static inline time_t pcsc_fido_monotonic_sec(void) {
+  struct timespec ts;
+  if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0 || ts.tv_sec < 0 ||
+      ts.tv_nsec < 0) {
+    return (time_t)LONG_MAX;
+  }
+  return ts.tv_sec;
+}
+
 static inline int pcsc_fido_timeout_until_ms(time_t deadline) {
-  time_t now = time(PCSC_FIDO_NULL);
+  time_t now = pcsc_fido_monotonic_sec();
   if (deadline <= now) {
     return 0;
   }

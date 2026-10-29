@@ -22,7 +22,21 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* Runs one CBOR/MSG request on a PC/SC worker thread, sending keepalives on
+ * `cid` until it finishes. On failure `err` holds the bridge error or one of:
+ *   PCSC_FIDO_ERR_MSG_CANCELLED: CTAPHID_CANCEL on `cid`, or a daemon stop;
+ *   PCSC_FIDO_ERR_MSG_CLIENT_CLOSED: UHID_CLOSE/STOP, nobody left to answer;
+ *   PCSC_FIDO_ERR_MSG_RESYNC: CTAPHID_INIT on `cid` abandoned the request.
+ *     `response` then holds the INIT's PCSC_FIDO_HID_INIT_NONCE_LEN-byte
+ *     nonce, which the caller answers instead of the request. */
 PCSC_FIDO_NODISCARD bool pcsc_fido_daemon_run_exchange_with_keepalive(
     int fd, uint32_t cid, uint8_t cmd, const uint8_t* payload,
     size_t payload_len, uint8_t* response, size_t response_cap,
     size_t* response_len, char* err, size_t err_cap);
+
+#if defined(PCSC_FIDO_TESTING)
+/* sizeof the private exchange job (response staging + err + sync state) so
+ * the scrub-audit tests can assert the job wipe by exact length instead of a
+ * size heuristic that the bridge CAPDU/RAPDU scrubs also satisfy. */
+PCSC_FIDO_NODISCARD size_t pcsc_fido_daemon_exchange_job_size(void);
+#endif

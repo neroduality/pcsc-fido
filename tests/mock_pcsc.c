@@ -91,6 +91,9 @@ typedef struct {
   bool connect_proto_mismatch_used;
   DWORD connect_active_protocol;
   bool card_present_immediately;
+  bool status_specific;
+  bool status_state_override;
+  DWORD status_state;
   bool status_present_sequence[MOCK_STATUS_SEQUENCE_CAP];
   size_t status_present_sequence_len;
   size_t status_present_sequence_pos;
@@ -102,6 +105,7 @@ typedef struct {
   bool select_first_fail;
   uint8_t transmit_response[MOCK_TRANSMIT_CAP];
   size_t transmit_response_len;
+  unsigned transmit_stall_ms;
   unsigned transmit_calls;
   unsigned get_status_calls;
 } mock_pcsc_state_t;
@@ -232,6 +236,15 @@ void mock_pcsc_set_card_present_immediately(bool enabled) {
   g_mock.card_present_immediately = enabled;
 }
 
+void mock_pcsc_set_status_specific(bool enabled) {
+  g_mock.status_specific = enabled;
+}
+
+void mock_pcsc_set_status_state(DWORD state) {
+  g_mock.status_state_override = true;
+  g_mock.status_state = state;
+}
+
 void mock_pcsc_set_status_present_sequence(const bool* present, size_t len) {
   if (present == PCSC_FIDO_NULL || len == 0u) {
     g_mock.status_present_sequence_len = 0u;
@@ -273,6 +286,10 @@ void mock_pcsc_set_transmit_wait_for_cancel(bool enabled) {
   atomic_store(&g_cancel_during_transmit, false);
   (void)pthread_cond_broadcast(&g_transmit_cond);
   pthread_mutex_unlock(&g_transmit_lock);
+}
+
+void mock_pcsc_set_transmit_stall_ms(unsigned stall_ms) {
+  g_mock.transmit_stall_ms = stall_ms;
 }
 
 void mock_pcsc_set_transmit_response(const uint8_t* data, size_t len) {
@@ -514,13 +531,36 @@ LONG scard_status(SCARDHANDLE card, LPSTR reader_name_out,
     *atr_len_out = 0u;
   }
   *protocol_out = g_mock.connect_active_protocol;
-  *state_out = 0u;
+  if (g_mock.status_state_override) {
+    *state_out = g_mock.status_state;
+    return SCARD_S_SUCCESS;
+  }
+  /* pcsc-lite's card-state encoding for a connected card / empty reader;
+   * status_specific reports a negotiated protocol (no SCARD_NEGOTIABLE). */
   if (g_mock.card_present_immediately) {
-    *state_out |= SCARD_STATE_PRESENT;
+    *state_out = SCARD_PRESENT | SCARD_POWERED |
+                 (g_mock.status_specific ? SCARD_SPECIFIC : SCARD_NEGOTIABLE);
   } else {
-    *state_out |= SCARD_STATE_EMPTY;
+    *state_out = SCARD_ABSENT;
   }
   return SCARD_S_SUCCESS;
+}
+
+/* pcsc-lite's SCardCancel does not interrupt SCardTransmit: block for the
+ * whole stall whatever cancels arrive, then let the card answer normally. */
+static void stall_transmit(unsigned stall_ms) {
+  struct timespec deadline;
+  int rc = 0;
+  deadline_from_now(&deadline, stall_ms);
+  pthread_mutex_lock(&g_transmit_lock);
+  atomic_store(&g_transmit_waiting, true);
+  (void)pthread_cond_broadcast(&g_transmit_cond);
+  while (rc == 0) {
+    rc = pthread_cond_timedwait(&g_transmit_cond, &g_transmit_lock, &deadline);
+  }
+  atomic_store(&g_transmit_waiting, false);
+  (void)pthread_cond_broadcast(&g_transmit_cond);
+  pthread_mutex_unlock(&g_transmit_lock);
 }
 
 LONG scard_transmit(SCARDHANDLE card, const SCARD_IO_REQUEST* send_pci,
@@ -534,6 +574,10 @@ LONG scard_transmit(SCARDHANDLE card, const SCARD_IO_REQUEST* send_pci,
   g_mock.transmit_calls++;
   if (recv_buffer == PCSC_FIDO_NULL || recv_length == PCSC_FIDO_NULL) {
     return SCARD_E_INVALID_PARAMETER;
+  }
+  if (g_mock.transmit_stall_ms != 0u &&
+      !is_select_apdu(send_buffer, send_length, &with_le)) {
+    stall_transmit(g_mock.transmit_stall_ms);
   }
   if (!is_select_apdu(send_buffer, send_length, &with_le) &&
       atomic_load(&g_transmit_wait_for_cancel)) {

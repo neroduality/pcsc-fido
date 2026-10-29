@@ -45,3 +45,12 @@ updates:
       default-days: 7
     rebase-strategy: disabled
     open-pull-requests-limit: 5
+
+  - package-ecosystem: pip
+    directory: /.github/pinned/ntia
+    schedule:
+      interval: yearly
+    cooldown:
+      default-days: 7
+    rebase-strategy: disabled
+    open-pull-requests-limit: 5

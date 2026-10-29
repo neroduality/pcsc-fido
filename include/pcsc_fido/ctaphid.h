@@ -77,7 +77,7 @@ enum {
   PCSC_FIDO_HID_INIT_RESP_INFO_OFF_MINOR = 2u,
   PCSC_FIDO_HID_INIT_RESP_INFO_OFF_BUILD = 3u,
   PCSC_FIDO_HID_INIT_RESP_INFO_OFF_CAPABILITIES = 4u,
-  /* "NFC\x01" -- stable demo CID assigned after CTAPHID INIT. */
+  /* "NFC\x01" -- first channel ID handed out by broadcast CTAPHID INIT. */
   PCSC_FIDO_DEFAULT_ASSIGNED_CID = 0x4E464301u,
 };
 
@@ -101,6 +101,20 @@ PCSC_FIDO_STATIC_ASSERT(PCSC_FIDO_HID_INIT_RESP_LEN ==
                                 PCSC_FIDO_HID_INIT_RESP_INFO_LEN,
                         "CTAPHID INIT response is nonce + CID + device info");
 
+PCSC_FIDO_NODISCARD bool pcsc_fido_hid_encode_init_packet(
+    uint32_t cid, uint8_t cmd, const uint8_t* payload, size_t payload_len,
+    uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE]);
+PCSC_FIDO_NODISCARD bool pcsc_fido_hid_encode_cont_packet(
+    uint32_t cid, uint8_t seq, const uint8_t* payload, size_t payload_len,
+    uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE]);
+PCSC_FIDO_NODISCARD bool pcsc_fido_hid_decode_init_header(
+    const uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE], uint32_t* cid,
+    uint8_t* cmd, size_t* payload_len);
+
+#if defined(PCSC_FIDO_TESTING)
+/* Client-side CTAPHID exchange used only by test_ctaphid. Compiled into
+ * pcsc_fido_core_testing only (never pcsc_fido_core); the daemon never calls
+ * it. */
 typedef int (*pcsc_fido_hid_write_fn_t)(void* ctx, const uint8_t* packet,
                                         size_t packet_len);
 typedef int (*pcsc_fido_hid_read_fn_t)(void* ctx, uint8_t* packet,
@@ -112,16 +126,8 @@ typedef struct {
   pcsc_fido_hid_read_fn_t read_packet;
 } pcsc_fido_hid_io_t;
 
-PCSC_FIDO_NODISCARD bool pcsc_fido_hid_encode_init_packet(
-    uint32_t cid, uint8_t cmd, const uint8_t* payload, size_t payload_len,
-    uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE]);
-PCSC_FIDO_NODISCARD bool pcsc_fido_hid_encode_cont_packet(
-    uint32_t cid, uint8_t seq, const uint8_t* payload, size_t payload_len,
-    uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE]);
-PCSC_FIDO_NODISCARD bool pcsc_fido_hid_decode_init_header(
-    const uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE], uint32_t* cid,
-    uint8_t* cmd, size_t* payload_len);
 PCSC_FIDO_NODISCARD bool pcsc_fido_hid_exchange(
     pcsc_fido_hid_io_t* io, uint8_t hid_cmd, const uint8_t* payload,
     size_t payload_len, uint8_t* response, size_t response_cap,
     size_t* response_len, int timeout_ms);
+#endif

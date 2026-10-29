@@ -30,7 +30,7 @@ Daemon-side stopgap middleware for Linux: Exposes a virtual FIDO HID device via 
 
 **Linux only** -- this bridge targets Linux browser flows that do not already expose NFC FIDO cards through the platform WebAuthn stack.
 
-**From 0.2.1:** ISO C23 (GCC 13+ / Clang 16+). Packages are built on Debian 13 / Fedora 38 so they install there and on newer releases (glibc **≥ ~2.41** / **≥ ~2.37**).
+**From 0.2.1:** ISO C23 (GCC 13+ / Clang 16+). The `.deb` is built on Debian 13 and the native `.rpm` (x86_64, aarch64) on Fedora 38 -- the oldest stables with a C23 toolchain. Each package's supported glibc floor is its builder's glibc (the enforced ceilings live in `.github/scripts/verify-glibc-ceiling.sh`). The cross-compiled `.rpm`s (armv7hl, ppc64le, riscv64, s390x) are built with the Debian 13 cross toolchain, so they carry the `.deb` floor. See [RELEASE.md](RELEASE.md#assets).
 
 ## Quick start
 
@@ -84,24 +84,42 @@ You need: an NFC reader / Smart Card reader (examples below), an **NFC FIDO card
    - [Cryptnox NFC FIDO cards](https://cryptnox.com/fido2-security-key-nfc-compatible-passwordless-key/): the tap/hold is presence; there is no separate touch button. If the card has or was set up with a PIN and the browser/RP asks for PIN/UV, a PIN prompt appears; otherwise it will not.
    - [YubiKey NFC security keys](https://www.yubico.com/us/product/yubikey-5-series/yubikey-5c-nfc/): keep the key on the reader and touch it when prompted. If the YubiKey has or was set up with a PIN and the browser/RP asks for PIN/UV, a PIN prompt appears; otherwise it will not.
 
+## Release
+
+GitHub Releases ship six `.deb`s, six `.rpm`s, a source tarball, and `SHA256SUMS`. Each package and the source tarball has a SLSA provenance attestation on the GitHub attestation log (not a release file):
+
+```sh
+sha256sum -c SHA256SUMS
+gh attestation verify pcsc-fido_VERSION_amd64.deb --repo neroduality/pcsc-fido
+```
+
+| Scheduled and manual scans |
+| --- |
+| [SBOM, NTIA, Grype](https://github.com/neroduality/pcsc-fido/actions/workflows/supply-chain-sbom.yml?query=branch%3Amain+is%3Asuccess) (manual) |
+| [CodeQL](https://github.com/neroduality/pcsc-fido/actions/workflows/codeql.yml?query=branch%3Amain+is%3Asuccess) (manual) |
+| [OSV-Scanner](https://github.com/neroduality/pcsc-fido/actions/workflows/osv-scanner.yml?query=branch%3Amain+is%3Asuccess) (manual) |
+| [Scorecard](https://github.com/neroduality/pcsc-fido/actions/workflows/openssf-scorecard.yml?query=branch%3Amain+is%3Asuccess) (monthly) |
+
+Architectures and glibc floors: [RELEASE.md](RELEASE.md).
+
 ## Documentation
 
-Release packages install [INSTALLATION](INSTALLATION.md) and NOTICE under `/usr/share/doc/pcsc-fido/`. Additional docs live in [docs/](docs/):
+Packages ship [INSTALLATION](INSTALLATION.md) and NOTICE under `/usr/share/doc/pcsc-fido/`. Design, security posture, and internals are in [docs/](docs/).
 
-The docs and source are also written for readers who want to understand how the bridge works--not only how to install it.
+## Status
+
+`pcsc-fido` is a stopgap until the Linux credential stack matures to make this bridge obsolete. The likely successor is the [Linux Credentials](https://github.com/linux-credentials) stack (`credentialsd` / `libwebauthn`). See [REMEDIATIONS](docs/REMEDIATIONS.md) for the security posture, limits, and what to watch.
 
 ## Contributing
 
-Contributions are welcome -- see the org-wide [CONTRIBUTING](https://github.com/neroduality/.github/blob/main/CONTRIBUTING.md) guide. The project is still early; expect rough edges until it has more hardware soak time.
+See the [CONTRIBUTING](https://github.com/neroduality/.github/blob/main/CONTRIBUTING.md) guide.
 
 ## Security
 
-`pcsc-fido` serves as a stopgap until the Linux credential stack matures to make this project--and the bridge it provides--entirely obsolete. See [REMEDIATIONS](docs/REMEDIATIONS.md) for the security posture and limits.
-
-Report vulnerabilities via the org [SECURITY](https://github.com/neroduality/.github/blob/main/SECURITY.md) policy.
-
-`pcsc-fido` has been open-sourced by [Nero Duality](https://neroduality.com/), which supports open tools that make WebAuthn with NFC FIDO cards and NFC-enabled security keys practical on Linux.
+Report vulnerabilities via the [SECURITY](https://github.com/neroduality/.github/blob/main/SECURITY.md) policy.
 
 ## License
 
 See [LICENSE](LICENSE).
+
+`pcsc-fido` has been open-sourced by [Nero Duality](https://neroduality.com/), which supports open tools that make WebAuthn with NFC FIDO cards and NFC-enabled security keys practical on Linux.

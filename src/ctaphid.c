@@ -102,6 +102,7 @@ bool pcsc_fido_hid_decode_init_header(
   return true;
 }
 
+#if defined(PCSC_FIDO_TESTING)
 static bool exchange_init(pcsc_fido_hid_io_t* io, uint32_t* cid,
                           int timeout_ms) {
   static const uint8_t NONCE[PCSC_FIDO_HID_INIT_NONCE_LEN] = {
@@ -111,6 +112,10 @@ static bool exchange_init(pcsc_fido_hid_io_t* io, uint32_t* cid,
   uint32_t response_cid;
   uint8_t cmd;
   size_t len;
+  /* INIT handshake frames (nonce echo + assigned CID). Scope-exit scrub so
+   * they are treated like every other CTAPHID staging packet. */
+  PCSC_FIDO_SCRUB_ON_EXIT(packet, sizeof(packet));
+  PCSC_FIDO_SCRUB_ON_EXIT(response, sizeof(response));
 
   if (io == PCSC_FIDO_NULL || cid == PCSC_FIDO_NULL) {
     return false;
@@ -150,6 +155,8 @@ static bool send_payload(pcsc_fido_hid_io_t* io, uint32_t cid, uint8_t hid_cmd,
   uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE];
   size_t sent;
   uint8_t seq;
+  /* Staging packet carries CTAP request slices; scope-exit scrub. */
+  PCSC_FIDO_SCRUB_ON_EXIT(packet, sizeof(packet));
 
   if (io == PCSC_FIDO_NULL ||
       (payload == PCSC_FIDO_NULL && payload_len != 0u)) {
@@ -201,6 +208,8 @@ static bool receive_payload(pcsc_fido_hid_io_t* io, uint32_t cid,
   uint8_t seq;
   size_t expected;
   size_t copied;
+  /* Staging packet carries CTAP response slices; scope-exit scrub. */
+  PCSC_FIDO_SCRUB_ON_EXIT(packet, sizeof(packet));
 
   if (io == PCSC_FIDO_NULL || response == PCSC_FIDO_NULL ||
       response_len == PCSC_FIDO_NULL) {
@@ -276,3 +285,4 @@ bool pcsc_fido_hid_exchange(pcsc_fido_hid_io_t* io, uint8_t hid_cmd,
   return receive_payload(io, cid, hid_cmd, response, response_cap, response_len,
                          timeout_ms);
 }
+#endif

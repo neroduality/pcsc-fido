@@ -47,7 +47,7 @@ Usage:
 Script options (must appear before actionlint flags):
   --container      Always run via Docker/Podman (ignore host actionlint).
   --host           Require host `actionlint` on PATH (fail if missing).
-  --image IMG      Container image (default: digest-pinned rhysd/actionlint:1.7.7).
+  --image IMG      Container image (default: digest-pinned rhysd/actionlint:1.7.12).
   -h, --help       Help.
 
 Environment:
@@ -68,7 +68,7 @@ source "${SCRIPT_DIR}/helper-container-engine.sh"
 
 FORCE_CONTAINER=0
 FORCE_HOST=0
-IMAGE="${ACTIONLINT_IMAGE:-rhysd/actionlint:1.7.7@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9}"
+IMAGE="${ACTIONLINT_IMAGE:-rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667}"
 ACTIONLINT_ARGS=()
 
 while [[ $# -gt 0 ]]; do

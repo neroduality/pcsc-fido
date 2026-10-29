@@ -22,6 +22,7 @@
 #include "pcsc_fido/pcsc_err.h"
 #include "pcsc_fido/pcsc_reader_ops.h"
 #include "pcsc_fido/pcsc_session.h"
+#include "scrub_hook.h"
 
 #include <pthread.h>
 #include <errno.h>
@@ -125,8 +126,13 @@ static void probe_fido_card_accepts_select_success(void) {
   expect_true(pcsc_fido_reader_establish_context(
                   &ctx, PCSC_FIDO_READER_CTX_USER, err, sizeof(err)),
               "establish for probe");
+  scrub_hook_reset();
   expect_true(pcsc_fido_reader_probe_fido_card(ctx, "Probe PICC 00 00"),
               "FIDO probe succeeds");
+  expect_true(
+      scrub_hook_calls_with_len(PCSC_FIDO_PROBE_SELECT_RESPONSE_MAX) == 1u,
+      "FIDO SELECT probe scrubs its response");
+  expect_true(scrub_hook_all_zero(), "probe scrub left the response zeroed");
   (void)SCardReleaseContext(ctx);
 }
 

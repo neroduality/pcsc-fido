@@ -141,6 +141,26 @@ static bool cbor_skip_simple_major7(uint8_t additional, size_t len,
   return false;
 }
 
+/* Proof bounds for cbor_skip_item_depth. A skip over every byte of the
+ * production buffer does not finish: each array/map walks a 64-bit count and
+ * the walk recurses to PCSC_FIDO_CBOR_MAX_NESTING (32), and the formula grows
+ * as unwind^depth. Under PCSC_FIDO_CBMC the walk instead:
+ *  - ignores array/map claims above PCSC_FIDO_CBMC_CBOR_SKIP_ITEMS
+ *    (__CPROVER_assume: those inputs are not checked, and are not reported as
+ *    handled)
+ *  - stops at PCSC_FIDO_CBMC_CBOR_SKIP_DEPTH rather than 32, so the recursion
+ *    unwind stays finite. Deeper objects are rejected by this model and are
+ *    not walked.
+ * run-local-cbmc.sh passes the matching --unwind / --object-bits. */
+#if defined(PCSC_FIDO_CBMC)
+#ifndef PCSC_FIDO_CBMC_CBOR_SKIP_ITEMS
+#define PCSC_FIDO_CBMC_CBOR_SKIP_ITEMS 2u
+#endif
+#ifndef PCSC_FIDO_CBMC_CBOR_SKIP_DEPTH
+#define PCSC_FIDO_CBMC_CBOR_SKIP_DEPTH 2u
+#endif
+#endif
+
 static bool cbor_skip_item_depth(const uint8_t* data, size_t len, size_t* off,
                                  unsigned depth) {
   /* PCSC_FIDO_BOUNDED_RECURSION max depth: PCSC_FIDO_CBOR_MAX_NESTING */
@@ -154,6 +174,11 @@ static bool cbor_skip_item_depth(const uint8_t* data, size_t len, size_t* off,
   if (depth >= PCSC_FIDO_CBOR_MAX_NESTING) {
     return false;
   }
+#if defined(PCSC_FIDO_CBMC)
+  if (depth >= PCSC_FIDO_CBMC_CBOR_SKIP_DEPTH) {
+    return false;
+  }
+#endif
   if (*off >= len) {
     return false;
   }
@@ -176,6 +201,9 @@ static bool cbor_skip_item_depth(const uint8_t* data, size_t len, size_t* off,
       if (!pcsc_fido_cbor_read_len(additional, data, len, off, &value)) {
         return false;
       }
+#if defined(PCSC_FIDO_CBMC)
+      __CPROVER_assume(value <= PCSC_FIDO_CBMC_CBOR_SKIP_ITEMS);
+#endif
       for (size_t i = 0u; i < value; i++) {
         if (!cbor_skip_item_depth(data, len, off, depth + 1u)) {
           return false;
@@ -186,6 +214,9 @@ static bool cbor_skip_item_depth(const uint8_t* data, size_t len, size_t* off,
       if (!pcsc_fido_cbor_read_len(additional, data, len, off, &value)) {
         return false;
       }
+#if defined(PCSC_FIDO_CBMC)
+      __CPROVER_assume(value <= PCSC_FIDO_CBMC_CBOR_SKIP_ITEMS);
+#endif
       for (size_t i = 0u; i < value; i++) {
         /* One map entry: skip the key item, then the value item. */
         for (size_t kv = 0u; kv < PCSC_FIDO_CBOR_MAP_ITEMS_PER_ENTRY; kv++) {

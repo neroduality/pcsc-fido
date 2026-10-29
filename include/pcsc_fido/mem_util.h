@@ -180,16 +180,29 @@ PCSC_FIDO_NODISCARD bool pcsc_fido_move_bytes(void* data, size_t* len,
 void pcsc_fido_zero_bytes(void* ptr, size_t len);
 void pcsc_fido_fill_bytes(void* ptr, size_t len, uint8_t value);
 
-static inline void pcsc_fido_secure_clear(void* ptr, size_t len) {
-  if (ptr == PCSC_FIDO_NULL || len == 0u) {
-    return;
+/* Erase helper: C23 memset_explicit, else glibc/BSD explicit_bzero, else a
+ * volatile byte loop. Out-of-line so the libc feature macro the second tier
+ * needs stays confined to mem_util.c. Does not run on _exit/abort; see
+ * PCSC_FIDO_SCRUB_ON_EXIT. */
+void pcsc_fido_secure_clear(void* ptr, size_t len);
+
+/* Scope-exit secure wipe. Declare after the buffer it guards; the wipe runs on
+ * every exit from the enclosing scope (return, goto, fallthrough), so no
+ * early-return path can skip it. Guards fire in reverse declaration order.
+ * cleanup does not run on _exit/abort/fatal signals; the daemon refuses to
+ * start if it cannot set PR_SET_DUMPABLE=0 and RLIMIT_CORE=0. */
+typedef struct {
+  void* ptr;
+  size_t len;
+} pcsc_fido_scrub_guard_t;
+
+static inline void pcsc_fido_scrub_guard_fire(pcsc_fido_scrub_guard_t* guard) {
+  if (guard != PCSC_FIDO_NULL && guard->ptr != PCSC_FIDO_NULL) {
+    pcsc_fido_secure_clear(guard->ptr, guard->len);
   }
-#ifdef PCSC_FIDO_HAVE_MEMSET_EXPLICIT
-  memset_explicit(ptr, 0, len);
-#else
-  volatile unsigned char* p = (volatile unsigned char*)ptr;
-  while (len-- > 0u) {
-    *p++ = 0u;
-  }
-#endif
 }
+
+#define PCSC_FIDO_SCRUB_ON_EXIT(ptr, len)                                    \
+  pcsc_fido_scrub_guard_t PCSC_FIDO_CONCAT(pcsc_fido_scrub_guard_, __LINE__) \
+      PCSC_FIDO_CLEANUP(pcsc_fido_scrub_guard_fire)                          \
+          PCSC_FIDO_MAYBE_UNUSED = {(ptr), (len)}

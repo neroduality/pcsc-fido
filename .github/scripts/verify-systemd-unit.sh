@@ -39,6 +39,7 @@ required_directives=(
   'StartLimitIntervalSec=60'
   'StartLimitBurst=5'
   'LimitNOFILE=256'
+  'LimitCORE=0'
   'TasksMax=32'
   'MemoryMax=256M'
   'NoNewPrivileges=yes'
@@ -58,9 +59,22 @@ required_directives=(
   'SystemCallFilter=~@resources @privileged @swap'
 )
 
+# Keys systemd accumulates across lines; for every other key the last
+# assignment wins, so a second value would override the required one.
+multi_value_keys=' After Wants SystemCallFilter '
+
 for directive in "${required_directives[@]}"; do
-  if ! grep -Fq "${directive}" "${unit_src}"; then
+  if ! grep -Fxq "${directive}" "${unit_src}"; then
     printf 'error: pcsc-fido.service missing required directive: %s\n' "${directive}" >&2
+    exit 1
+  fi
+  key="${directive%%=*}"
+  if [[ ${multi_value_keys} == *" ${key} "* ]]; then
+    continue
+  fi
+  if grep -E "^[[:space:]]*${key}[[:space:]]*=" "${unit_src}" | grep -Fvxq "${directive}"; then
+    printf 'error: pcsc-fido.service sets %s to something other than %s\n' \
+      "${key}" "${directive}" >&2
     exit 1
   fi
 done

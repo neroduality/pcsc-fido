@@ -21,7 +21,15 @@
 #include <stddef.h>
 
 #define PCSC_FIDO_ERR_MSG_CANCELLED "cancelled"
+#define PCSC_FIDO_ERR_MSG_CLIENT_CLOSED "UHID client closed"
+#define PCSC_FIDO_ERR_MSG_RESYNC "CTAPHID channel resynchronized"
 #define PCSC_FIDO_ERR_MSG_RATE_LIMIT "PC/SC exchange rate limit exceeded"
+/* The worker never entered the bridge, so the card session is unchanged. */
+#define PCSC_FIDO_ERR_MSG_EXCHANGE_IN_PROGRESS "exchange already in progress"
+#define PCSC_FIDO_ERR_MSG_EXCHANGE_MUTEX \
+  "failed to initialize PC/SC exchange mutex"
+#define PCSC_FIDO_ERR_MSG_EXCHANGE_THREAD \
+  "failed to start PC/SC exchange thread"
 #define PCSC_FIDO_ERR_MSG_CANCELLED_CARD_WAIT \
   "cancelled while waiting for FIDO NFC card"
 

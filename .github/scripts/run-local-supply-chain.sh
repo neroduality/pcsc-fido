@@ -15,27 +15,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Reproduce the Syft -> Grype pipeline locally using Docker or Podman (same family as CI:
-# `.github/workflows/supply-chain-sbom.yml`).
+# Reproduce the Syft -> NTIA check -> Grype pipeline locally using Docker or Podman
+# (same family as CI: `.github/workflows/supply-chain-sbom.yml`).
 #
 # Usage (from anywhere):
 #   bash /path/to/repo/.github/scripts/run-local-supply-chain.sh
-#   SYFT_IMAGE=anchore/syft:v1.36.0 GRYPE_IMAGE=anchore/grype:v0.92.0 bash .../run-local-supply-chain.sh
+#   SYFT_IMAGE=anchore/syft:v1.55.0 GRYPE_IMAGE=anchore/grype:v0.121.0 bash .../run-local-supply-chain.sh
 #   CONTAINER_ENGINE=podman bash .../run-local-supply-chain.sh
 #
 set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Generate an SPDX JSON SBOM with Syft, then scan it with Grype (container tools).
+Generate an SPDX JSON SBOM with Syft, check NTIA minimum elements, then scan it with Grype.
 
-Requires: docker or podman.
+Requires: docker or podman, plus python3 and ntia-checker on the host (the NTIA
+check runs outside the container).
 
 Environment:
   CONTAINER_ENGINE            docker (default) or podman
   CI_PLATFORM                 Unset: linux/amd64 on x86_64, else linux/$host. Empty (CI_PLATFORM=): native.
-  SYFT_IMAGE                  Syft image (default: anchore/syft:v1.36.0)
-  GRYPE_IMAGE                 Grype image (default: anchore/grype:v0.92.0)
+  SYFT_IMAGE                  Syft image (default: anchore/syft:v1.55.0)
+  GRYPE_IMAGE                 Grype image (default: anchore/grype:v0.121.0)
   SUPPLY_CHAIN_TOOL_CACHE     Host dir for Syft/Grype caches (default: ~/.cache/nero-supply-chain-tools)
   SUPPLY_CHAIN_VERBOSE=1      Pass -v into Syft and Grype (more progress on stderr)
 
@@ -63,8 +64,8 @@ if ! command -v "${ENGINE}" >/dev/null 2>&1; then
   exit 1
 fi
 
-SYFT_IMAGE="${SYFT_IMAGE:-anchore/syft:v1.36.0}"
-GRYPE_IMAGE="${GRYPE_IMAGE:-anchore/grype:v0.92.0}"
+SYFT_IMAGE="${SYFT_IMAGE:-anchore/syft:v1.55.0@sha256:4cc92b64ca74ffca4c94d4c8fcc01f217731375300be14d0b6eeb2e82eaa110a}"
+GRYPE_IMAGE="${GRYPE_IMAGE:-anchore/grype:v0.121.0@sha256:621d56d1d68106b787022c81546f7e0a36202a25d1239f0c20195fab8c16f7ea}"
 
 # Persist caches -- otherwise every `docker run --rm` rebuilds Grype's DB download (minutes, often silent).
 _chain_cache="${SUPPLY_CHAIN_TOOL_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/nero-supply-chain-tools}"
@@ -118,6 +119,8 @@ if [[ ! -s ${sbom_tmp} ]]; then
   printf 'error: Syft produced an empty SBOM\n' >&2
   exit 1
 fi
+
+bash "${SCRIPT_DIR}/verify-sbom-ntia.sh" "${sbom_tmp}"
 
 printf '\n-- Grype (%s) --\n' "${GRYPE_IMAGE}"
 printf 'Tool cache (host -> container): %s -> /root/.cache/grype\n' "${_grype_cache}" >&2

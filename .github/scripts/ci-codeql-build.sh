@@ -34,11 +34,22 @@ if [[ "$(uname -s)" == "Linux" && ${CODEQL_INSTALL_LINUX_DEPS:-0} == "1" ]]; the
   bash "${repo_root}/.github/scripts/install-linux-deps.sh"
 fi
 
+# codeql.yml cannot source the pin helper, so assert here -- inside the CodeQL
+# job itself, not only from `make codeql-local` -- that the workflow's container
+# image and bundle URL match helper-codeql-pins.sh.
+# shellcheck source=helper-codeql-pins.sh
+source "${repo_root}/.github/scripts/helper-codeql-pins.sh"
+codeql_pins_check_workflow "${repo_root}/.github/workflows/codeql.yml"
+
 build_dir="${CODEQL_CMAKE_DIR:-${repo_root}/build/codeql-cmake}"
 jobs="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
 
 rm -rf "${build_dir}"
-cmake -S "${repo_root}" -B "${build_dir}" -DCMAKE_BUILD_TYPE=Release
+# BUILD_TESTING=ON so the traced build (and therefore the CodeQL database)
+# covers tests/*.c and the test-only headers, not just the daemon sources.
+# The fuzz and CBMC harness sources are compiled (and traced) through their
+# lint OBJECT libraries, but no fuzzer is linked: that needs clang + libFuzzer.
+cmake -S "${repo_root}" -B "${build_dir}" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
 cmake --build "${build_dir}" --parallel "${jobs}"
 
 printf -- '-- CodeQL traced build complete --\n'

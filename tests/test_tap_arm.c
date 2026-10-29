@@ -27,6 +27,7 @@
 #include <fcntl.h>
 #include <linux/uhid.h>
 #include <poll.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -56,6 +57,9 @@ enum {
   LONG_ARM_WINDOW_SEC = TEST_LIT_5U,
   READS_THROUGH_UHID_CLOSE = TEST_LIT_3,
   READ_ERROR_ARM_WINDOW_SEC = 20u,
+  /* The first start is the initial card monitor; the second is its restart
+   * after the arm window expires. */
+  MONITOR_RESTART_CREATE_CALL = TEST_LIT_2U,
 };
 
 static time_t g_fake_time = FAKE_TIME_START;
@@ -86,12 +90,31 @@ int __wrap_nanosleep(const struct timespec* req PCSC_FIDO_MAYBE_UNUSED,
       &(const struct timespec){.tv_sec = 0, .tv_nsec = NS_PER_MS}, rem);
 }
 
-time_t __wrap_time(time_t* t) {
-  g_fake_time++;
-  if (t != PCSC_FIDO_NULL) {
-    *t = g_fake_time;
+static int g_pthread_create_calls;
+static int g_fail_pthread_create_call;
+
+extern int __real_pthread_create(pthread_t* thread, const pthread_attr_t* attr,
+                                 void* (*start)(void*), void* arg);
+
+int __wrap_pthread_create(pthread_t* thread, const pthread_attr_t* attr,
+                          void* (*start)(void*), void* arg) {
+  g_pthread_create_calls++;
+  if (g_pthread_create_calls == g_fail_pthread_create_call) {
+    return EAGAIN;
   }
-  return g_fake_time;
+  return __real_pthread_create(thread, attr, start, arg);
+}
+
+extern int __real_clock_gettime(clockid_t clock_id, struct timespec* ts);
+
+int __wrap_clock_gettime(clockid_t clock_id, struct timespec* ts) {
+  if (clock_id != CLOCK_MONOTONIC || ts == PCSC_FIDO_NULL) {
+    return __real_clock_gettime(clock_id, ts);
+  }
+  g_fake_time++;
+  ts->tv_sec = g_fake_time;
+  ts->tv_nsec = 0;
+  return 0;
 }
 
 extern ssize_t __real_read(int fd, void* buf, size_t count);
@@ -268,6 +291,8 @@ static void reset_tap_arm_test_state(void) {
   g_read_io_error_once = 0;
   g_uhid_create_count = 0;
   g_uhid_destroy_count = 0;
+  g_pthread_create_calls = 0;
+  g_fail_pthread_create_call = 0;
   pcsc_fido_daemon_signals_shutdown();
   pcsc_fido_daemon_reset_stop_request();
   expect_true(pcsc_fido_daemon_signals_init(), "signal setup");
@@ -372,6 +397,24 @@ static void tap_arm_expired_window_rejects_ready_uhid(void) {
   pcsc_fido_daemon_signals_shutdown();
 }
 
+static void tap_arm_monitor_restart_failure_exits_nonzero(void) {
+  static const bool RESTART_FAILURE_SEQUENCE[] = {false, true, true};
+  pcsc_fido_browser_config_t cfg = default_cfg();
+  reset_tap_arm_test_state();
+  mock_pcsc_reset();
+  mock_pcsc_set_readers("Tap Arm Reader 00 00");
+  mock_pcsc_set_status_present_sequence(
+      RESTART_FAILURE_SEQUENCE,
+      sizeof(RESTART_FAILURE_SEQUENCE) / sizeof(RESTART_FAILURE_SEQUENCE[0]));
+  g_fail_pthread_create_call = MONITOR_RESTART_CREATE_CALL;
+  g_request_stop_on_dormant_timeout = 1;
+  expect_true(pcsc_fido_tap_arm_run(FAKE_UHID_FD, &cfg) == 1,
+              "a card monitor that cannot restart after disarm exits 1");
+  expect_true(g_uhid_destroy_count > 0u,
+              "virtual key disarmed before the monitor restart");
+  pcsc_fido_daemon_signals_shutdown();
+}
+
 static void tap_arm_timeout_discards_stale_card_wake(void) {
   static const bool STALE_CARD_WAKE_SEQUENCE[] = {false, true, true};
   pcsc_fido_browser_config_t cfg = default_cfg();
@@ -436,6 +479,7 @@ int main(void) {
   tap_arm_poll_error_exits_nonzero();
   tap_arm_uhid_event_while_armed();
   tap_arm_expired_window_rejects_ready_uhid();
+  tap_arm_monitor_restart_failure_exits_nonzero();
   tap_arm_timeout_discards_stale_card_wake();
   tap_arm_uhid_read_error_exits_nonzero();
   tap_arm_stop_request_exits_cleanly();

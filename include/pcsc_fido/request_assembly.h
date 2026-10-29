@@ -30,6 +30,7 @@ typedef struct {
   uint16_t expected;
   uint16_t copied;
   uint8_t next_seq;
+  uint64_t deadline_ms;
   uint8_t payload[PCSC_FIDO_DAEMON_PENDING_MAX];
 } pcsc_fido_daemon_pending_request_t;
 
@@ -45,6 +46,16 @@ typedef void (*pcsc_fido_daemon_request_handler_fn_t)(const void* ctx,
 
 void pcsc_fido_daemon_pending_request_reset(
     pcsc_fido_daemon_pending_request_t* pending);
+
+/* Drops an open reassembly whose inter-frame gap has elapsed and sends
+ * ERR_MSG_TIMEOUT on `fd`. True when a request was dropped. */
+PCSC_FIDO_NODISCARD bool pcsc_fido_daemon_pending_request_expire(
+    int fd, pcsc_fido_daemon_pending_request_t* pending);
+
+/* Poll wait that wakes in time to expire an open reassembly. `cap_ms` < 0
+ * means no other cap. 0 means do not wait. */
+PCSC_FIDO_NODISCARD int pcsc_fido_daemon_pending_request_poll_timeout_ms(
+    const pcsc_fido_daemon_pending_request_t* pending, int cap_ms);
 
 PCSC_FIDO_NODISCARD bool pcsc_fido_daemon_request_assembler_feed(
     int fd, pcsc_fido_daemon_pending_request_t* pending,

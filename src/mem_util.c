@@ -14,6 +14,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+/* On the explicit_bzero tier, CMakeLists.txt adds _DEFAULT_SOURCE for this
+ * translation unit only (glibc declares explicit_bzero under _DEFAULT_SOURCE,
+ * which a strict -std=c23 + _POSIX_C_SOURCE build does not imply); the probe
+ * in cmake/VerifyCompiler.cmake uses the same macro set. */
+
 #include "pcsc_fido/mem_util.h"
 
 #include <stdint.h>
@@ -68,4 +73,22 @@ void pcsc_fido_fill_bytes(void* ptr, size_t len, uint8_t value) {
     return;
   }
   memset(ptr, (int)value, len);
+}
+
+void pcsc_fido_secure_clear(void* ptr, size_t len) {
+  if (ptr == PCSC_FIDO_NULL || len == 0u) {
+    return;
+  }
+#if defined(PCSC_FIDO_HAVE_MEMSET_EXPLICIT)
+  memset_explicit(ptr, 0, len);
+#elif defined(PCSC_FIDO_HAVE_EXPLICIT_BZERO)
+  explicit_bzero(ptr, len);
+#else
+  /* Volatile stores cannot be elided as dead; byte-wise so the compiler
+   * cannot convert the loop back into a removable memset. */
+  volatile unsigned char* p = (volatile unsigned char*)ptr;
+  while (len-- > 0u) {
+    *p++ = 0u;
+  }
+#endif
 }

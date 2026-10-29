@@ -89,8 +89,15 @@ bool pcsc_fido_session_is_ready(void) {
   return ready;
 }
 
+/* SCardStatus reports SCARD_ABSENT/SCARD_PRESENT/... card-state bits, not the
+ * SCARD_STATE_* reader-state bits SCardGetStatusChange uses. pcsc-lite sets
+ * SCARD_PRESENT for an unpowered card and SCARD_PRESENT|SCARD_SWALLOWED for
+ * an unresponsive one; neither accepts an APDU. SCARD_POWERED is set for both
+ * the negotiable state and a specific protocol. The high half of the dword
+ * is an event counter and is not part of the mask. */
 static bool card_state_is_usable(DWORD state) {
-  return pcsc_fido_reader_status_has_card((uint32_t)state);
+  return (state & (DWORD)SCARD_POWERED) != 0u &&
+         (state & (DWORD)SCARD_ABSENT) == 0u;
 }
 
 bool pcsc_fido_session_verify_ready(char* err, size_t err_cap) {
@@ -240,6 +247,12 @@ static bool transmit_apdu(SCARDHANDLE card, const SCARD_IO_REQUEST* send_pci,
     pcsc_fido_set_pcsc_err(err, err_cap, "SCardTransmit", rv);
     return false;
   }
+  /* The driver is given the buffer size and must not report more bytes than
+   * that. A larger value would be used as a copy length. */
+  if ((size_t)recv_len > rapdu_cap) {
+    pcsc_fido_set_err(err, err_cap, "SCardTransmit length exceeds the buffer");
+    return false;
+  }
   *rapdu_len = (size_t)recv_len;
   return true;
 }
@@ -359,6 +372,8 @@ static bool select_fido(SCARDHANDLE card, const SCARD_IO_REQUEST* send_pci,
   {
     uint8_t apdu[PCSC_FIDO_SELECT_PROBE_APDU_CAP];
     uint8_t rapdu[PCSC_FIDO_BRIDGE_MAX_RESPONSE];
+    /* SELECT response survives the chain-chunk wipe; scrub this copy too. */
+    PCSC_FIDO_SCRUB_ON_EXIT(rapdu, sizeof(rapdu));
     size_t apdu_len = 0u;
     size_t rapdu_len = 0u;
     session_transmit_ctx_t tx_ctx = {.card = card, .send_pci = send_pci};

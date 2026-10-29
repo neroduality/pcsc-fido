@@ -40,12 +40,18 @@ void mock_pcsc_set_connect_fail(LONG rv);
 void mock_pcsc_set_connect_proto_mismatch_once(bool enabled);
 void mock_pcsc_set_connect_active_protocol(DWORD protocol);
 void mock_pcsc_set_card_present_immediately(bool enabled);
+void mock_pcsc_set_status_specific(bool enabled);
+/* Forces the SCardStatus card-state dword (present, swallowed, powered) for
+ * every later call until mock_pcsc_reset(). */
+void mock_pcsc_set_status_state(DWORD state);
 void mock_pcsc_set_status_present_sequence(const bool* present, size_t len);
 void mock_pcsc_set_get_status_timeouts_before_present(unsigned count);
 void mock_pcsc_set_multi_present_readers(bool enabled);
 void mock_pcsc_set_transmit_fail(bool enabled);
 void mock_pcsc_set_transmit_fail_once(bool enabled);
 void mock_pcsc_set_transmit_wait_for_cancel(bool enabled);
+/* Non-SELECT transmits block for `stall_ms`, ignoring SCardCancel; 0 = off. */
+void mock_pcsc_set_transmit_stall_ms(unsigned stall_ms);
 void mock_pcsc_set_transmit_response(const uint8_t* data, size_t len);
 void mock_pcsc_set_select_first_fail(bool enabled);
 

@@ -134,6 +134,14 @@ fi
 
 pcsc_fido_refuse_root_bind_mount_writes
 
+# Packaging-source checks before anything is built: the systemd unit's sandbox
+# and resource directives (incl. LimitCORE=0) and the polkit/udev/CPack
+# scriptlets. Pure-source, so they run for native and cross builds alike; this
+# is their only automated call site (make package, Release workflow,
+# `make ci-local CI_LOCAL_FLAGS=--release*`).
+bash "${SCRIPT_DIR}/verify-systemd-unit.sh"
+bash "${SCRIPT_DIR}/verify-pcsc-integration.sh"
+
 CMAKE_ARGS=(
   -S "$ROOT"
   -B "$BUILD_DIR"
@@ -190,11 +198,19 @@ fi
 
 cp -f "${artifacts[@]}" "$DIST_DIR/"
 
-binary="${BUILD_DIR}/pcsc-fido"
-if [[ ! -x $binary ]]; then
-  printf 'error: expected binary at %s\n' "$binary" >&2
+# Verify the CPack-staged install copy, i.e. the exact bytes inside the .deb/.rpm.
+# The build-tree ${BUILD_DIR}/pcsc-fido is already stripped and .comment-free
+# (CMakeLists.txt POST_BUILD), but it still carries CMake's build RUNPATH (on
+# cross ports into the sysroot) that only install removes; the staged copy has
+# been through install + CPACK_STRIP_FILES and is what ships.
+mapfile -t staged < <(find "${BUILD_DIR}/_CPack_Packages/Linux/${FORMAT^^}" \
+  -type f -path '*/usr/bin/pcsc-fido' -print 2>/dev/null)
+if [[ ${#staged[@]} -ne 1 || ! -x ${staged[0]} ]]; then
+  printf 'error: expected exactly one CPack-staged usr/bin/pcsc-fido under %s/_CPack_Packages/Linux/%s (found %d)\n' \
+    "$BUILD_DIR" "${FORMAT^^}" "${#staged[@]}" >&2
   exit 1
 fi
+binary="${staged[0]}"
 
 if [[ $CROSS -eq 1 ]]; then
   pattern="$(pcsc_fido_cross_file_glob "$ARCH")"
@@ -209,6 +225,15 @@ if [[ $CROSS -eq 1 ]]; then
 else
   bash "${SCRIPT_DIR}/verify-glibc-ceiling.sh" "${binary}" --format "${FORMAT}"
 fi
+
+# ELF hardening (PIE/RELRO/NOW/noexecstack/DT_RELR/no-RPATH/DT_NEEDED/stripped/
+# no-.comment) is checked on native and cross binaries alike: readelf/file inspect
+# foreign ELFs.
+# The build tree's CMakeCache.txt tells the verifier whether this target's linker
+# implements DT_RELR (kit HAVE_LINK_Z_PACK_RELATIVE_RELOCS probe), so RELR is
+# required exactly where -z pack-relative-relocs is not ignored by ld.
+bash "${SCRIPT_DIR}/verify-release-elf-hardening.sh" "${binary}" \
+  --cmake-cache "${BUILD_DIR}/CMakeCache.txt"
 
 printf -- '-- release-build-package: %s %s complete --\n' "$FORMAT" "$ARCH"
 printf '  artifacts: %s\n' "${artifacts[*]}"

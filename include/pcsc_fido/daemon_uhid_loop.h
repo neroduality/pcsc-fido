@@ -24,6 +24,17 @@
 #include <linux/uhid.h>
 #include <stdbool.h>
 
+/* Drops a stalled reassembly (ERR_MSG_TIMEOUT) and an idle PC/SC session.
+ * The card is disconnected when the session was idle. */
+void pcsc_fido_daemon_expire_idle_state(
+    int fd, pcsc_fido_daemon_pending_request_t* pending,
+    pcsc_fido_daemon_channels_t* channels);
+
+/* Earlier of `cap_ms`, the reassembly gap, and the session idle deadline. */
+PCSC_FIDO_NODISCARD int pcsc_fido_daemon_idle_poll_timeout_ms(
+    const pcsc_fido_daemon_pending_request_t* pending,
+    const pcsc_fido_daemon_channels_t* channels, int cap_ms);
+
 void pcsc_fido_daemon_handle_uhid_event(
     int fd, const struct uhid_event* ev,
     pcsc_fido_daemon_pending_request_t* pending,

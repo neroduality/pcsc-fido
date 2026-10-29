@@ -22,6 +22,8 @@ enum {
   MULTI_RESPONSE_FILL_BYTE = 0xABu,
   MULTI_RESPONSE_READ_LIMIT = 4,
   MULTI_RESPONSE_MIN_PACKETS = 2,
+  MULTI_RESPONSE_FRAMES = 4,
+  MULTI_RESPONSE_EXPECTED_SCRUBS = MULTI_RESPONSE_FRAMES + 1,
   OVERSIZE_RESPONSE_PAYLOAD_LENGTH = 0x10000u,
   OUTPUT_PACKET_FILL_BYTE = 0xCCu,
   SHORT_OUTPUT_SIZE = 8,
@@ -37,6 +39,7 @@ enum {
 #include <unistd.h>
 #include "pcsc_fido/mem_util.h"
 #include "pcsc_fido/pcsc_log.h"
+#include "scrub_hook.h"
 
 static int failures;
 static unsigned g_eintr_writes_remaining;
@@ -134,10 +137,21 @@ static void send_hid_response_multi_packet(void) {
   pcsc_fido_fill_bytes(payload, sizeof(payload),
                        (uint8_t)MULTI_RESPONSE_FILL_BYTE);
   expect_true(uhid_pair(sv) == 0, "socketpair for multi");
+  scrub_hook_reset();
   expect_true(
       pcsc_fido_daemon_send_hid_response(
           sv[0], TEST_CID, PCSC_FIDO_HID_CMD_CBOR, payload, sizeof(payload)),
       "send multi-packet response");
+  /* 200-byte payload = INIT + 3 CONT frames: one UHID event scrub per frame
+   * plus one staging-packet scrub at scope exit. */
+  expect_true(scrub_hook_calls() == MULTI_RESPONSE_EXPECTED_SCRUBS,
+              "every UHID frame and the staging packet are scrubbed");
+  expect_true(scrub_hook_calls_with_len(sizeof(struct uhid_event)) ==
+                  MULTI_RESPONSE_FRAMES,
+              "one whole-event scrub per UHID frame");
+  expect_true(scrub_hook_calls_with_len(PCSC_FIDO_HID_PACKET_SIZE) == 1u,
+              "staging HID packet scrubbed once at scope exit");
+  expect_true(scrub_hook_all_zero(), "secure_clear leaves regions zeroed");
   {
     struct uhid_event ev;
     unsigned packets = 0u;

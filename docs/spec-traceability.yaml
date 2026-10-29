@@ -76,6 +76,12 @@ constants:
     source: include/pcsc_fido/apdu.h
 
   - spec_prefix: CTAP2.3
+    symbol: PCSC_FIDO_CTAP2_CMD_GET_NEXT_ASSERTION
+    spec_value: "0x08"
+    ref: "FIDO CTAP 2.3 §6.3 -- authenticatorGetNextAssertion command code 08h."
+    source: include/pcsc_fido/apdu.h
+
+  - spec_prefix: CTAP2.3
     symbol: PCSC_FIDO_CTAP2_CMD_MAKE_CREDENTIAL
     spec_value: "0x01"
     ref: "FIDO CTAP 2.3 §6.1 -- authenticatorMakeCredential command code 01h."
@@ -105,6 +111,12 @@ constants:
     ref: "FIDO CTAP 2.3 §6.2 authenticatorGetAssertion -- request member clientDataHash (0x02)."
     source: include/pcsc_fido/daemon_policy.h
 
+  - spec_prefix: CTAP2.3
+    symbol: PCSC_FIDO_GET_ASSERTION_RESP_KEY_NUMBER_OF_CREDENTIALS
+    spec_value: "0x05"
+    ref: "FIDO CTAP 2.3 §6.2 authenticatorGetAssertion -- response member numberOfCredentials (0x05)."
+    source: include/pcsc_fido/daemon_policy.h
+
   - spec_prefix: CTAPHID
     symbol: PCSC_FIDO_CTAPHID_CBOR
     spec_value: "0x10"
@@ -116,6 +128,12 @@ constants:
     spec_value: "7609"
     ref: "[DERIVED] FIDO CTAP 2.3 §11.2.4-11.2.5 -- max framed payload 57 + 128x59 = 7609."
     source: include/pcsc_fido/ctaphid.h
+
+  - spec_prefix: CTAPHID
+    symbol: PCSC_FIDO_CTAPHID_MSG
+    spec_value: "0x03"
+    ref: "FIDO CTAP 2.3 §11.2.9.1.1 -- CTAPHID_MSG (0x03)."
+    source: include/pcsc_fido/apdu.h
 
   - spec_prefix: CTAPHID
     symbol: PCSC_FIDO_DAEMON_CAP_CBOR
@@ -136,6 +154,12 @@ constants:
     source: include/pcsc_fido/uhid_transport.h
 
   - spec_prefix: CTAPHID
+    symbol: PCSC_FIDO_DAEMON_ERR_INVALID_CHANNEL
+    spec_value: "0x0B"
+    ref: "FIDO CTAP 2.3 §11.2.9.1.6 -- ERR_INVALID_CHANNEL (0x0B)."
+    source: include/pcsc_fido/uhid_transport.h
+
+  - spec_prefix: CTAPHID
     symbol: PCSC_FIDO_DAEMON_ERR_INVALID_CMD
     spec_value: "0x01"
     ref: "FIDO CTAP 2.3 §11.2.9.1.6 -- ERR_INVALID_CMD (0x01)."
@@ -151,6 +175,12 @@ constants:
     symbol: PCSC_FIDO_DAEMON_ERR_INVALID_SEQ
     spec_value: "0x04"
     ref: "FIDO CTAP 2.3 §11.2.9.1.6 -- ERR_INVALID_SEQ (0x04)."
+    source: include/pcsc_fido/uhid_transport.h
+
+  - spec_prefix: CTAPHID
+    symbol: PCSC_FIDO_DAEMON_ERR_MSG_TIMEOUT
+    spec_value: "0x05"
+    ref: "FIDO CTAP 2.3 §11.2.9.1.6 -- ERR_MSG_TIMEOUT (0x05)."
     source: include/pcsc_fido/uhid_transport.h
 
   - spec_prefix: CTAPHID
@@ -280,6 +310,30 @@ constants:
     source: include/pcsc_fido/ctaphid.h
 
   - spec_prefix: IMPL-POLICY
+    symbol: PCSC_FIDO_DAEMON_CHANNEL_SLOTS
+    spec_value: "8"
+    ref: "Implementation policy -- live CTAPHID channels before LRU eviction (non-normative)."
+    source: include/pcsc_fido/daemon_channels.h
+
+  - spec_prefix: IMPL-POLICY
+    symbol: PCSC_FIDO_DAEMON_MAX_NEXT_ASSERTIONS
+    spec_value: "32"
+    ref: "Implementation policy -- cap on stored getNextAssertion calls after one getAssertion (non-normative)."
+    source: include/pcsc_fido/daemon_channels.h
+
+  - spec_prefix: IMPL-POLICY
+    symbol: PCSC_FIDO_DAEMON_REASSEMBLY_TIMEOUT_MS
+    spec_value: "3000"
+    ref: "Implementation policy -- max gap between frames of one CTAPHID request (non-normative)."
+    source: include/pcsc_fido/uhid_transport.h
+
+  - spec_prefix: IMPL-POLICY
+    symbol: PCSC_FIDO_DAEMON_SESSION_IDLE_SEC
+    spec_value: "30"
+    ref: "Implementation policy -- idle hold of a non-terminal PC/SC session (non-normative)."
+    source: include/pcsc_fido/daemon_channels.h
+
+  - spec_prefix: IMPL-POLICY
     symbol: PCSC_FIDO_ERR_MSG_MAX
     spec_value: "256"
     ref: "Implementation policy -- error message buffer capacity (non-normative)."
@@ -287,20 +341,20 @@ constants:
 
   - spec_prefix: IMPL-POLICY
     symbol: PCSC_FIDO_RATE_CTAPHID_DEFAULT
-    spec_value: "30"
-    ref: "Implementation policy -- CTAPHID request budget per window (non-normative)."
+    spec_value: "60"
+    ref: "Implementation policy -- CTAPHID request token-bucket burst (non-normative)."
     source: src/daemon_rate_limit.c
 
   - spec_prefix: IMPL-POLICY
     symbol: PCSC_FIDO_RATE_EXCHANGE_DEFAULT
-    spec_value: "10"
-    ref: "Implementation policy -- PC/SC exchange budget per window (non-normative)."
+    spec_value: "24"
+    ref: "Implementation policy -- PC/SC exchange token-bucket burst (non-normative)."
     source: src/daemon_rate_limit.c
 
   - spec_prefix: IMPL-POLICY
     symbol: PCSC_FIDO_RATE_WINDOW_SEC_DEFAULT
     spec_value: "90"
-    ref: "Implementation policy -- rate-limit window seconds (non-normative tuning)."
+    ref: "Implementation policy -- token-bucket full-refill seconds (non-normative tuning)."
     source: src/daemon_rate_limit.c
 
   - spec_prefix: IMPL-POLICY

@@ -21,6 +21,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "pcsc_fido/pcsc_log.h"
+#include "scrub_hook.h"
 
 enum {
   TEST_LIT_0X11U = 0x11u,
@@ -117,6 +118,75 @@ static void copy_cstr_and_format_err(void) {
               "truncation marker");
 }
 
+static bool all_zero(const uint8_t* bytes, size_t len) {
+  for (size_t i = 0u; i < len; i++) {
+    if (bytes[i] != 0u) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/* Guard target lives in the caller so its bytes can be inspected after the
+ * guarded scope has exited. Returns early on `fail` to exercise that path. */
+static bool guarded_fill(uint8_t* buf, size_t len, bool fail) {
+  PCSC_FIDO_SCRUB_ON_EXIT(buf, len);
+  pcsc_fido_fill_bytes(buf, len, (uint8_t)TEST_LIT_0XAAU);
+  if (fail) {
+    return false;
+  }
+  pcsc_fido_fill_bytes(buf, len, (uint8_t)TEST_LIT_0XBBU);
+  return true;
+}
+
+static void scrub_guard_fires_on_normal_exit(void) {
+  uint8_t buf[TEST_LIT_16U];
+  scrub_hook_reset();
+  expect_true(guarded_fill(buf, sizeof(buf), false), "guarded call succeeds");
+  expect_true(scrub_hook_calls() == 1u, "guard fires exactly once");
+  expect_true(scrub_hook_calls_with_len(sizeof(buf)) == 1u,
+              "guard wipes the full declared length");
+  expect_true(all_zero(buf, sizeof(buf)), "buffer zeroed after scope exit");
+}
+
+static void scrub_guard_fires_on_early_return(void) {
+  uint8_t buf[TEST_LIT_16U];
+  scrub_hook_reset();
+  expect_true(!guarded_fill(buf, sizeof(buf), true), "guarded call fails");
+  expect_true(scrub_hook_calls() == 1u, "guard fires on early return");
+  expect_true(all_zero(buf, sizeof(buf)),
+              "buffer zeroed on the error path too");
+}
+
+static void scrub_guard_fires_per_declaration(void) {
+  uint8_t a[TEST_LIT_16U];
+  uint8_t b[TEST_LIT_32U];
+  scrub_hook_reset();
+  {
+    PCSC_FIDO_SCRUB_ON_EXIT(a, sizeof(a));
+    PCSC_FIDO_SCRUB_ON_EXIT(b, sizeof(b));
+    pcsc_fido_fill_bytes(a, sizeof(a), (uint8_t)TEST_LIT_0XCCU);
+    pcsc_fido_fill_bytes(b, sizeof(b), (uint8_t)TEST_LIT_0XDDU);
+    expect_true(scrub_hook_calls() == 0u, "guards are inert until scope exit");
+  }
+  expect_true(scrub_hook_calls() == TEST_LIT_2U, "one wipe per guard");
+  expect_true(scrub_hook_calls_with_len(sizeof(a)) == 1u &&
+                  scrub_hook_calls_with_len(sizeof(b)) == 1u,
+              "each guard wipes its own region");
+  expect_true(all_zero(a, sizeof(a)) && all_zero(b, sizeof(b)),
+              "both regions zeroed");
+  expect_true(scrub_hook_all_zero(), "hook observed zeroed regions");
+}
+
+static void scrub_guard_null_is_noop(void) {
+  scrub_hook_reset();
+  {
+    PCSC_FIDO_SCRUB_ON_EXIT((void*)PCSC_FIDO_NULL, TEST_LIT_16U);
+  }
+  expect_true(scrub_hook_calls() == 0u,
+              "NULL guard does not call secure_clear");
+}
+
 static void secure_clear_smoke(void) {
   uint8_t secret[TEST_LIT_8] = {TEST_LIT_0XAAU, TEST_LIT_0XBBU, TEST_LIT_0XCCU,
                                 TEST_LIT_0XDDU, TEST_LIT_0XEEU, TEST_LIT_0XFFU,
@@ -132,5 +202,9 @@ int main(void) {
   copy_and_move();
   copy_cstr_and_format_err();
   secure_clear_smoke();
+  scrub_guard_fires_on_normal_exit();
+  scrub_guard_fires_on_early_return();
+  scrub_guard_fires_per_declaration();
+  scrub_guard_null_is_noop();
   return failures == 0 ? 0 : 1;
 }

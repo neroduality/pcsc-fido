@@ -36,3 +36,10 @@ void pcsc_fido_io_vprintf(FILE* stream, const char* fmt, va_list args);
 
 void pcsc_fido_io_fputs(FILE* stream, const char* s);
 void pcsc_fido_io_fputc(FILE* stream, int c);
+
+#if defined(PCSC_FIDO_TESTING)
+/* Used only by tests that fork() with buffered stdio pending (so the child
+ * does not re-emit the parent's buffer). Compiled into pcsc_fido_core_testing
+ * only (never pcsc_fido_core); the daemon never calls it. */
+void pcsc_fido_io_fflush(FILE* stream);
+#endif

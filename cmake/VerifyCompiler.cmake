@@ -53,6 +53,19 @@ if(NOT PCSC_FIDO_C23_NULLPTR_OK)
     "Compiler does not accept ISO C23 nullptr (tried -std=c23, -std=c2x, -std=gnu2x)")
 endif()
 
+# PCSC_FIDO_SCRUB_ON_EXIT (mem_util.h) relies on __attribute__((cleanup)) to
+# wipe secrets on every scope exit. attrs.h defines PCSC_FIDO_CLEANUP without
+# a fallback, so refuse to configure on a toolchain that lacks the attribute.
+# (`fire` is deliberately non-static: static analyzers do not count a cleanup
+# attribute as a call and would otherwise flag it as unreachable.)
+check_c_source_compiles(
+  "void fire(int *p);\nvoid fire(int *p) { *p = 0; }\nint main(void) { __attribute__((cleanup(fire))) int guarded = 1; return guarded - 1; }\n"
+  PCSC_FIDO_HAVE_ATTRIBUTE_CLEANUP)
+if(NOT PCSC_FIDO_HAVE_ATTRIBUTE_CLEANUP)
+  message(FATAL_ERROR
+    "Compiler does not support __attribute__((cleanup)); required for scope-exit secure wipes")
+endif()
+
 set(_pcsc_fido_ckd_probe_source
   "#include <stdckdint.h>\n#include <stddef.h>\nint main(void){ size_t r; return ckd_add(&r,(size_t)1,(size_t)2)?1:0; }\n")
 set(PCSC_FIDO_HAVE_STDCKDINT FALSE)
@@ -80,6 +93,36 @@ foreach(_std IN LISTS _pcsc_fido_c23_std_candidates)
   endif()
 endforeach()
 unset(CMAKE_REQUIRED_FLAGS)
+
+# Second-tier guaranteed-erase primitive. glibc does not ship memset_explicit;
+# it provides explicit_bzero (2.25+), declared only under _DEFAULT_SOURCE, which
+# a strict -std=c23 + _POSIX_C_SOURCE build does not imply. Probe with exactly
+# the macro set mem_util.c uses so the result matches the real compile.
+set(_pcsc_fido_explicit_bzero_probe_source
+  "#include <string.h>\nint main(void){ char b[4]; explicit_bzero(b,sizeof b); return 0; }\n")
+set(PCSC_FIDO_HAVE_EXPLICIT_BZERO FALSE)
+set(_pcsc_fido_probe_save_defs "${CMAKE_REQUIRED_DEFINITIONS}")
+set(CMAKE_REQUIRED_DEFINITIONS "-D_POSIX_C_SOURCE=200809L" "-D_DEFAULT_SOURCE")
+foreach(_std IN LISTS _pcsc_fido_c23_std_candidates)
+  set(CMAKE_REQUIRED_FLAGS "-std=${_std}")
+  set(_probe_var "PCSC_FIDO_HAVE_EXPLICIT_BZERO_${_std}")
+  check_c_source_compiles("${_pcsc_fido_explicit_bzero_probe_source}" "${_probe_var}")
+  if(${_probe_var})
+    set(PCSC_FIDO_HAVE_EXPLICIT_BZERO TRUE)
+    break()
+  endif()
+endforeach()
+unset(CMAKE_REQUIRED_FLAGS)
+set(CMAKE_REQUIRED_DEFINITIONS "${_pcsc_fido_probe_save_defs}")
+unset(_pcsc_fido_probe_save_defs)
+
+if(PCSC_FIDO_HAVE_MEMSET_EXPLICIT)
+  message(STATUS "pcsc-fido: secure clear via C23 memset_explicit")
+elseif(PCSC_FIDO_HAVE_EXPLICIT_BZERO)
+  message(STATUS "pcsc-fido: secure clear via explicit_bzero")
+else()
+  message(STATUS "pcsc-fido: secure clear via volatile byte loop")
+endif()
 
 if(PCSC_FIDO_HAVE_STDCKDINT)
   message(STATUS "pcsc-fido: ISO C23 stdckdint.h available")
@@ -122,9 +165,8 @@ else()
   message(STATUS "pcsc-fido: counted_by unavailable for struct pointer fields")
 endif()
 
-if(PCSC_FIDO_HAVE_MEMSET_EXPLICIT)
-  add_compile_definitions(PCSC_FIDO_HAVE_MEMSET_EXPLICIT=1)
-endif()
+# PCSC_FIDO_HAVE_MEMSET_EXPLICIT / PCSC_FIDO_HAVE_EXPLICIT_BZERO are applied by
+# CMakeLists.txt to src/mem_util.c only (the sole consumer).
 if(PCSC_FIDO_HAVE_COUNTED_BY)
   add_compile_definitions(PCSC_FIDO_HAVE_COUNTED_BY=1)
 endif()

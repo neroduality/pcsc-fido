@@ -17,7 +17,7 @@
 
 # Run OpenSSF Scorecard against this checkout (same engine as CI publishes remotely).
 #
-# Uses Docker or Podman + gcr.io/openssf/scorecard:stable. The container runs as root so it can
+# Uses Docker or Podman + ghcr.io/ossf/scorecard:v5.6.0. The container runs as root so it can
 # traverse bind-mounted trees where some directories are not world-readable (matches typical CI).
 #
 # Usage (from repo root):
@@ -41,7 +41,7 @@ Options:
                    GitHub Action with an online repo -- not supported with --local.
   --output PATH    Write scorecard stdout to PATH (--format json is passed through jq when available).
   --show-details   Pass --show-details to scorecard
-  --image IMG      Container image (default: gcr.io/openssf/scorecard:stable)
+  --image IMG      Container image (default: digest-pinned ghcr.io/ossf/scorecard:v5.6.0)
   -h, --help       Help
 
 Environment:
@@ -77,7 +77,7 @@ source "${SCRIPT_DIR}/helper-container-bind-mount.sh"
 FORMAT="json"
 OUTPUT_PATH=""
 SHOW_DETAILS=0
-IMAGE="${OSSF_SCORECARD_IMAGE:-gcr.io/openssf/scorecard:stable}"
+IMAGE="${OSSF_SCORECARD_IMAGE:-ghcr.io/ossf/scorecard:v5.6.0@sha256:c0a21a1c33a2d8819937d0a8a62e6f4189c800639abd9f0bfbe61c90c71fae90}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in

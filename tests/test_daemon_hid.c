@@ -65,12 +65,37 @@ static void decode_init_header(void) {
       "continuation packet rejected by init decoder");
 }
 
+static void init_packet_detection(void) {
+  uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE];
+  const uint8_t nonce[PCSC_FIDO_HID_INIT_NONCE_LEN] = {0};
+  expect_true(pcsc_fido_hid_encode_init_packet(TEST_CID, PCSC_FIDO_HID_CMD_INIT,
+                                               nonce, sizeof(nonce), packet),
+              "encode INIT packet");
+  expect_true(pcsc_fido_daemon_hid_is_init_packet(packet, TEST_CID),
+              "INIT packet detected");
+  expect_true(!pcsc_fido_daemon_hid_is_init_packet(packet, TEST_CID_OTHER),
+              "INIT requires matching CID");
+  expect_true(
+      pcsc_fido_hid_encode_init_packet(TEST_CID, PCSC_FIDO_HID_CMD_INIT, nonce,
+                                       sizeof(nonce) - 1u, packet),
+      "encode short INIT packet");
+  expect_true(!pcsc_fido_daemon_hid_is_init_packet(packet, TEST_CID),
+              "INIT needs an 8-byte nonce");
+  expect_true(pcsc_fido_hid_encode_init_packet(TEST_CID, PCSC_FIDO_HID_CMD_PING,
+                                               nonce, sizeof(nonce), packet),
+              "encode PING packet");
+  expect_true(!pcsc_fido_daemon_hid_is_init_packet(packet, TEST_CID),
+              "PING with a nonce-sized payload is not INIT");
+}
+
 static void null_argument_guards(void) {
   uint32_t cid = 0u;
   uint8_t cmd = 0u;
   size_t len = 0u;
   expect_true(!pcsc_fido_daemon_hid_is_cancel_packet(PCSC_FIDO_NULL, 0u),
               "PCSC_FIDO_NULL cancel packet");
+  expect_true(!pcsc_fido_daemon_hid_is_init_packet(PCSC_FIDO_NULL, 0u),
+              "PCSC_FIDO_NULL INIT packet");
   expect_true(!pcsc_fido_daemon_hid_decode_init_header(PCSC_FIDO_NULL, &cid,
                                                        &cmd, &len),
               "PCSC_FIDO_NULL init header packet");
@@ -79,6 +104,7 @@ static void null_argument_guards(void) {
 int main(void) {
   packet_cid_and_cancel();
   decode_init_header();
+  init_packet_detection();
   null_argument_guards();
   return failures == 0 ? 0 : 1;
 }

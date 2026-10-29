@@ -31,8 +31,8 @@ Usage: bash make/wipe-host-build-trees.sh {test|lint|verify|ci}
 Scopes:
   test   -- build/unit (plain unit-test CMake tree) + build-{asan,ubsan,valgrind,tsan}
   lint   -- build/lint, build/clang-tidy-compile-db
-  verify -- test trees + scan-build-report
-  ci     -- build/ci, scan-build-report, lint trees, test trees
+  verify -- test trees + scan-build-report + build/ci-release
+  ci     -- build/ci, build/ci-release, scan-build-report, lint trees, test trees
            (always wipes; no opt-out)
 
 Set PCSC_FIDO_KEEP_HOST_BUILDS=1 to skip wiping for test/lint/verify only (faster local iteration).
@@ -67,6 +67,7 @@ wipe_test_build_trees() {
 
 wipe_ci_build_trees() {
   wipe_dir "${repo_root}/build/ci"
+  wipe_dir "${repo_root}/build/ci-release"
   wipe_dir "${repo_root}/scan-build-report"
   wipe_lint_build_trees
   wipe_test_build_trees
@@ -86,6 +87,8 @@ case "${scope}" in
   verify)
     wipe_test_build_trees
     wipe_dir "${repo_root}/scan-build-report"
+    # Host reconfigure; a container cache (/src) makes cmake refuse.
+    wipe_dir "${repo_root}/build/ci-release"
     ;;
   ci)
     wipe_ci_build_trees

@@ -185,6 +185,19 @@ chown_outputs() {
   pcsc_fido_restore_bind_mount_ownership build dist
 }
 
+# GitHub release jobs configure on a fresh runner. Locally, a reused
+# build/release-<fmt>-<arch> keeps CMakeCache.txt, so compiler/linker probe results
+# (e.g. kit HAVE_LINK_* / HAVE_LIBC_DT_RELR) and the toolchain try-compile mode are
+# frozen from the previous run and the ELF hardening verify audits a stale link line.
+# Match the container matrix: start clean unless the operator opts to keep trees.
+fresh_release_build_dir() {
+  local fmt="$1" arch="$2"
+  if [[ ${PCSC_FIDO_LOCAL_CI_KEEP_BUILDS:-0} == "1" ]]; then
+    return 0
+  fi
+  pcsc_fido_rm_repo_path "${REPO_ROOT}" "build/release-${fmt}-${arch}"
+}
+
 run_native_package() {
   local arch="$1"
   local fmt="$2"
@@ -211,6 +224,7 @@ run_native_package() {
   esac
 
   printf '\n-- Release packages: native %s %s (%s) --\n' "${arch}" "${fmt}" "${label}"
+  fresh_release_build_dir "${fmt}" "${arch}"
   dist_before="$(mktemp)"
   find "${REPO_ROOT}/dist" -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' \) -printf '%f\n' 2>/dev/null | sort >"${dist_before}" || true
   # shellcheck disable=SC2016
@@ -248,6 +262,7 @@ run_cross_package() {
   fi
 
   printf '\n-- Release packages: cross %s %s (debian:trixie) --\n' "${arch}" "${fmt}"
+  fresh_release_build_dir "${fmt}" "${arch}"
   dist_before="$(mktemp)"
   find "${REPO_ROOT}/dist" -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' \) -printf '%f\n' 2>/dev/null | sort >"${dist_before}" || true
   # shellcheck disable=SC2016

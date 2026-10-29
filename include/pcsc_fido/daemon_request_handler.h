@@ -17,13 +17,14 @@
 #pragma once
 
 #include "pcsc_fido/ctaphid.h"
+#include "pcsc_fido/daemon_channels.h"
 
 #include <stddef.h>
 #include <stdint.h>
 
 typedef struct {
   int fd;
-  const uint32_t* assigned_cid;
+  pcsc_fido_daemon_channels_t* channels;
 } pcsc_fido_daemon_request_context_t;
 
 void pcsc_fido_daemon_handle_hid_request(

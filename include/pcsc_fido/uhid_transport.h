@@ -27,14 +27,20 @@
 #include <limits.h>
 
 /* Spec prefixes for docs/spec-traceability.yaml: CTAP2.3 CTAPHID pid.codes
- * (cite in-file as [CTAP2.3], [CTAPHID], [pid.codes]). */
+ * IMPL-POLICY (cite in-file as [CTAP2.3], [CTAPHID], [pid.codes],
+ * [IMPL-POLICY]). */
 enum {
-  PCSC_FIDO_DAEMON_CAP_WINK = 0x01u,         /* [CTAPHID] */
-  PCSC_FIDO_DAEMON_CAP_CBOR = 0x04u,         /* [CTAPHID] */
-  PCSC_FIDO_DAEMON_ERR_INVALID_CMD = 0x01u,  /* [CTAPHID] */
-  PCSC_FIDO_DAEMON_ERR_INVALID_LEN = 0x03u,  /* [CTAPHID] */
-  PCSC_FIDO_DAEMON_ERR_INVALID_SEQ = 0x04u,  /* [CTAPHID] */
-  PCSC_FIDO_DAEMON_ERR_CHANNEL_BUSY = 0x06u, /* [CTAPHID] */
+  PCSC_FIDO_DAEMON_CAP_WINK = 0x01u,            /* [CTAPHID] */
+  PCSC_FIDO_DAEMON_CAP_CBOR = 0x04u,            /* [CTAPHID] */
+  PCSC_FIDO_DAEMON_ERR_INVALID_CMD = 0x01u,     /* [CTAPHID] */
+  PCSC_FIDO_DAEMON_ERR_INVALID_LEN = 0x03u,     /* [CTAPHID] */
+  PCSC_FIDO_DAEMON_ERR_INVALID_SEQ = 0x04u,     /* [CTAPHID] */
+  PCSC_FIDO_DAEMON_ERR_MSG_TIMEOUT = 0x05u,     /* [CTAPHID] */
+  PCSC_FIDO_DAEMON_ERR_CHANNEL_BUSY = 0x06u,    /* [CTAPHID] */
+  PCSC_FIDO_DAEMON_ERR_INVALID_CHANNEL = 0x0Bu, /* [CTAPHID] */
+  /* Max gap between frames of one request before it is dropped with
+   * ERR_MSG_TIMEOUT, so a stalled sender cannot hold the channel. */
+  PCSC_FIDO_DAEMON_REASSEMBLY_TIMEOUT_MS = 3000u, /* [IMPL-POLICY] */
   PCSC_FIDO_DAEMON_ERR_OTHER = 0x7Fu,
   PCSC_FIDO_DAEMON_CTAP2_ERR_KEEPALIVE_CANCEL = 0x2Du, /* [CTAP2.3] §8.2 */
   PCSC_FIDO_DAEMON_PENDING_MAX = PCSC_FIDO_CTAPHID_MAX_PAYLOAD,

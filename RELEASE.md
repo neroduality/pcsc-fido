@@ -17,54 +17,59 @@ limitations under the License.
 
 # Release
 
-Publish **`pcsc-fido`** packages, source, and checksums from an annotated `v*` tag.
+Pushing an annotated `v*` tag runs [`release.yml`](.github/workflows/release.yml): Main CI, then all packages, `SHA256SUMS`, and a GitHub Release whose body is [`.github/release-notes.md`](.github/release-notes.md) with `@TAG@` / `@VERSION@` filled in.
 
-Pushing a tag runs [`.github/workflows/release.yml`](.github/workflows/release.yml). That workflow first runs **Main CI** for the tagged commit (reusable `main-ci.yml`: lint container + Debian/Fedora test matrix), then builds packages, writes `SHA256SUMS`, and creates the GitHub Release from [`.github/release-notes.md`](.github/release-notes.md) (`release-render-notes.sh` substitutes `@TAG@` / `@VERSION@`). For release-specific notes, edit the release description in the GitHub UI after CI finishes.
+## Checklist
 
-From **0.2.1** (ISO C23), `.deb` / `.rpm` packages are built on **Debian 13 (trixie)** and **Fedora 38** — the oldest stables that still provide a C23 toolchain — so installs need glibc **≥ ~2.41** / **≥ ~2.37**. CI and local packaging run `verify-glibc-ceiling.sh` (`readelf`) to reject any binary that requires a newer `GLIBC_*`.
+1. Main CI is green on `main`. Run the supply-chain workflow manually (produces the SBOM).
+2. Set `project(pcsc_fido VERSION x.y.z)` in [`CMakeLists.txt`](CMakeLists.txt) and commit. This is the only version source (`--version` and package versions).
+3. Tag and push together:
 
-## Maintainer checklist
+   ```bash
+   git tag -a v0.3.0 -m "v0.3.0"
+   git push origin main v0.3.0
+   ```
 
-1. Merge to **`main`** with green **Main CI**.
-2. Bump `project(pcsc_fido VERSION ...)` in [`CMakeLists.txt`](CMakeLists.txt) to match the tag without `v`, and commit. That is the **only** version source: CMake generates `include/pcsc_fido/version.h` for `pcsc-fido --version`, and the same value feeds CPACK / `.deb` / `.rpm` package versions.
-3. Tag **that commit**, then push **`main`** and the tag together:
+4. After CI finishes, add release notes in the GitHub UI.
 
-```bash
-git tag -a v0.1.0 -m "v0.1.0"
-git push origin main v0.1.0
-```
-
-The tag should point at the commit that contains the version bump so packages and the source tarball report the correct version.
-
-Local verification before tagging (optional):
+Optional local checks before tagging:
 
 ```bash
 make verify
 make lint
-make ci-local CI_LOCAL_FLAGS=--release   # optional local amd64 .deb smoke
-```
-
-Preview rendered release notes (optional):
-
-```bash
-TAG=v0.1.0 bash .github/scripts/release-render-notes.sh
+make ci-local CI_LOCAL_FLAGS=--release                 # all packages, all arches
+TAG=v0.3.0 bash .github/scripts/release-render-notes.sh # preview release body
 ```
 
 ## Assets
 
-The release publishes **14 files**:
-
 - `.deb`: amd64, arm64, armhf, ppc64el, riscv64, s390x
 - `.rpm`: x86_64, aarch64, armv7hl, ppc64le, riscv64, s390x
-- Source tarball: `pcsc-fido-VERSION.tar.gz`
-- Checksums: `SHA256SUMS`
+- `pcsc-fido-VERSION.tar.gz`
+- `SHA256SUMS` for the 13 files above
 
-CI verifies asset counts and filenames. Release invokes **Main CI** for the tagged commit before packaging. Native package builds also run `ctest` with `BUILD_TESTING=ON`; cross-compiled ports skip unit tests (`SKIP_CTEST=1`) and are file-checked only.
+Each file has a SLSA provenance attestation on GitHub (not a release file). The SPDX SBOM is an Actions artifact of the supply-chain workflow; its Grype scan reports `high`+ findings without failing the job.
+
+Native builds run `ctest`; cross builds skip it. Every binary must pass the glibc ceiling check and an ELF check allowing only `libc.so.6`, `libpcsclite.so.1`, `libgcc_s.so.1`, and the dynamic linker as `DT_NEEDED`.
+
+### Builders and glibc floors
+
+Since 0.2.1 (ISO C23). A package needs at least the glibc of the system that built it. `verify-glibc-ceiling.sh` rejects any binary that references a newer `GLIBC_*` symbol version.
+
+| Assets | Builder | Min. target glibc |
+| ------ | ------- | ----------------- |
+| `.deb` amd64, arm64 | `debian:trixie-slim` | 2.41 |
+| `.deb` armhf, ppc64el, riscv64, s390x | `debian:trixie` cross | 2.41 |
+| `.rpm` x86_64, aarch64 | `fedora:38` | 2.37 |
+| `.rpm` armv7hl, ppc64le, riscv64, s390x | `debian:trixie` cross + `rpmbuild` | 2.41 |
+
+Cross `.rpm`s therefore need a newer glibc than native ones. Native `.deb`s get their `libc6` dependency from `dpkg-shlibdeps`; cross `.deb`s disable it and declare no `libc6` version.
 
 ## Verify downloads
 
 ```bash
 sha256sum -c SHA256SUMS
+gh attestation verify pcsc-fido_VERSION_amd64.deb --repo neroduality/pcsc-fido
 ```
 
-GitHub also displays a SHA-256 digest per release asset.
+Same command for any other file, including the source tarball.

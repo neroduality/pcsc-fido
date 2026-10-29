@@ -157,9 +157,70 @@ static void classifies_get_assertion(void) {
               "zero-length payload rejected");
 }
 
+static void classifies_get_next_assertion(void) {
+  const uint8_t get_next[] = {0x08u};
+  const uint8_t get_assertion[] = {0x02u, 0xA0u};
+  expect_true(pcsc_fido_daemon_is_get_next_assertion(
+                  PCSC_FIDO_HID_CMD_CBOR, get_next, sizeof(get_next)),
+              "getNextAssertion recognized");
+  expect_true(!pcsc_fido_daemon_is_get_next_assertion(
+                  PCSC_FIDO_HID_CMD_CBOR, get_assertion, sizeof(get_assertion)),
+              "getAssertion is not getNextAssertion");
+  expect_true(!pcsc_fido_daemon_is_get_next_assertion(
+                  PCSC_FIDO_HID_CMD_MSG, get_next, sizeof(get_next)),
+              "non-CBOR command is not getNextAssertion");
+  expect_true(!pcsc_fido_daemon_is_get_next_assertion(PCSC_FIDO_HID_CMD_CBOR,
+                                                      PCSC_FIDO_NULL, 1u),
+              "PCSC_FIDO_NULL payload rejected");
+  expect_true(!pcsc_fido_daemon_is_get_next_assertion(PCSC_FIDO_HID_CMD_CBOR,
+                                                      get_next, 0u),
+              "zero-length payload rejected");
+}
+
+static void reads_number_of_credentials(void) {
+  // OK, map{2}: 0x01 -> {"id": h'AABB'}, 0x05 -> 3.
+  const uint8_t three[] = {0x00u, 0xA2u, 0x01u, 0xA1u, 0x62u, 0x69u,
+                           0x64u, 0x42u, 0xAAu, 0xBBu, 0x05u, 0x03u};
+  // OK, map{1}: 0x05 -> 32 (one-byte argument).
+  const uint8_t thirty_two[] = {0x00u, 0xA1u, 0x05u, 0x18u, 0x20u};
+  // OK, map{1}: 0x01 -> h'AA'; no numberOfCredentials.
+  const uint8_t absent[] = {0x00u, 0xA1u, 0x01u, 0x41u, 0xAAu};
+  // CTAP2_ERR_NO_CREDENTIALS (0x2E), then a map that would say 3.
+  const uint8_t error_status[] = {0x2Eu, 0xA1u, 0x05u, 0x03u};
+  // map{2} cut off inside the first value, before key 0x05.
+  const uint8_t truncated[] = {0x00u, 0xA2u, 0x01u, 0x42u, 0xAAu};
+  // numberOfCredentials as a text string.
+  const uint8_t not_uint[] = {0x00u, 0xA1u, 0x05u, 0x61u, 0x33u};
+  expect_true(pcsc_fido_daemon_get_assertion_credential_count(
+                  three, sizeof(three)) == TEST_LIT_3U,
+              "numberOfCredentials read after a nested map");
+  expect_true(pcsc_fido_daemon_get_assertion_credential_count(
+                  thirty_two, sizeof(thirty_two)) == TEST_LIT_32U,
+              "numberOfCredentials with a one-byte argument");
+  expect_true(pcsc_fido_daemon_get_assertion_credential_count(
+                  absent, sizeof(absent)) == 0u,
+              "absent numberOfCredentials reads as 0");
+  expect_true(pcsc_fido_daemon_get_assertion_credential_count(
+                  error_status, sizeof(error_status)) == 0u,
+              "error status reads as 0");
+  expect_true(pcsc_fido_daemon_get_assertion_credential_count(
+                  truncated, sizeof(truncated)) == 0u,
+              "truncated response reads as 0");
+  expect_true(pcsc_fido_daemon_get_assertion_credential_count(
+                  not_uint, sizeof(not_uint)) == 0u,
+              "non-integer numberOfCredentials reads as 0");
+  expect_true(pcsc_fido_daemon_get_assertion_credential_count(three, 1u) == 0u,
+              "status byte alone reads as 0");
+  expect_true(pcsc_fido_daemon_get_assertion_credential_count(
+                  PCSC_FIDO_NULL, sizeof(three)) == 0u,
+              "PCSC_FIDO_NULL response reads as 0");
+}
+
 int main(void) {
   detects_empty_client_data_hash();
   classifies_terminal_requests();
   classifies_get_assertion();
+  classifies_get_next_assertion();
+  reads_number_of_credentials();
   return failures == 0 ? 0 : 1;
 }

@@ -16,7 +16,7 @@
 
 # Shared Linux GNU cross toolchain logic (included by linux-cross-*.cmake).
 
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.21)
 
 if(NOT PCSC_FIDO_TARGET_ARCH OR NOT PCSC_FIDO_TARGET_TRIPLET OR NOT PCSC_FIDO_TARGET_PROCESSOR)
   message(FATAL_ERROR "linux-cross-common.cmake requires target variables to be preset")

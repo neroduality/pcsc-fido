@@ -34,6 +34,9 @@ Group=pcsc-fido
 Restart=on-failure
 RestartSec=2s
 LimitNOFILE=256
+# No core dumps: a dump mid-exchange would persist CTAP material the daemon
+# otherwise scrubs from its stack (the binary also sets PR_SET_DUMPABLE=0).
+LimitCORE=0
 TasksMax=32
 MemoryMax=256M
 

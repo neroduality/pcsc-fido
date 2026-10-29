@@ -29,6 +29,8 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/prctl.h>
+#include <sys/resource.h>
 #include <unistd.h>
 #include "pcsc_fido/mem_util.h"
 
@@ -136,12 +138,38 @@ static int browser_daemon_main_with_fd(int argc, char** argv, int uhid_fd)
   return run_daemon(uhid_fd);
 }
 
+/* The daemon scrubs CTAP material from its stack after use, but a core dump
+ * captures the stack mid-exchange and persists it. Make the process
+ * non-dumpable (also hides /proc/<pid>/mem from same-uid readers) and set a
+ * zero core limit; the systemd unit's LimitCORE=0 is the belt to this brace for
+ * the service path, this covers manual / debug invocations too. Failure is
+ * fatal: a dumpable process would undo the in-memory scrubs. */
+static int harden_process_memory(void) {
+  struct rlimit no_core;
+  no_core.rlim_cur = 0;
+  no_core.rlim_max = 0;
+  if (prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0) {
+    pcsc_fido_log(PCSC_FIDO_LOG_ERROR, "%s: %s", "prctl(PR_SET_DUMPABLE)",
+                  strerror(errno));
+    return -1;
+  }
+  if (setrlimit(RLIMIT_CORE, &no_core) != 0) {
+    pcsc_fido_log(PCSC_FIDO_LOG_ERROR, "%s: %s", "setrlimit(RLIMIT_CORE)",
+                  strerror(errno));
+    return -1;
+  }
+  return 0;
+}
+
 int pcsc_fido_browser_daemon_main(int argc, char** argv) {
   int cli_status = handle_cli(argc, argv);
   int fd;
   int status;
   if (cli_status >= 0) {
     return cli_status;
+  }
+  if (harden_process_memory() != 0) {
+    return 1;
   }
   fd = open("/dev/uhid", O_RDWR | O_CLOEXEC);
   if (fd < 0) {

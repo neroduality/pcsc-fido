@@ -22,4 +22,18 @@
 
 PCSC_FIDO_NODISCARD bool pcsc_fido_rate_limit_allow_ctaphid(void);
 PCSC_FIDO_NODISCARD bool pcsc_fido_rate_limit_allow_exchange(void);
+/* Consumes an exchange token and marks the next bridge exchange as already
+ * charged, so the handler can refuse before it touches the PC/SC session.
+ * The mark is per calling thread: one thread cannot drop another's. */
+PCSC_FIDO_NODISCARD bool pcsc_fido_rate_limit_charge_exchange(void);
+/* True when some caller already charged an exchange that nobody has adopted.
+ * Adopts one such charge. */
+PCSC_FIDO_NODISCARD bool pcsc_fido_rate_limit_take_exchange_charge(void);
+/* Drops this thread's charges that no bridge exchange adopted. Another
+ * thread's charge stays. The tokens stay spent. */
+void pcsc_fido_rate_limit_release_exchange_charge(void);
+/* Forgets this thread's charge count without returning those charges to the
+ * pool. The worker calls this path's take before the joiner returns; the
+ * joiner then drops only its thread-local count. */
+void pcsc_fido_rate_limit_detach_local_charge(void);
 void pcsc_fido_rate_limit_reset(void);

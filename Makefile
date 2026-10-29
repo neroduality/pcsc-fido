@@ -49,7 +49,7 @@ export LINT_REPO_ROOT := $(CURDIR)
 
 .DEFAULT_GOAL := all
 
-.PHONY: all build debug test verify asan ubsan valgrind tsan sanitizers coverage lint require-lint-kit lint-self-test security-lint ci-local ci-local-help codeql-local lima deps maybe-deps install install-debug post-install uninstall package clean help refuse-root ensure-build-owner fuzz
+.PHONY: all build debug test verify asan ubsan valgrind tsan sanitizers coverage lint require-lint-kit lint-self-test security-lint ci-local ci-local-help codeql-local lima deps maybe-deps install install-debug post-install uninstall package clean help refuse-root ensure-build-owner fuzz cbmc
 
 # Build/test targets must not run as root -- keeps build/ user-owned.
 refuse-root:
@@ -86,6 +86,7 @@ test: ensure-build-owner maybe-deps
 	@cmake --build "$(TEST_BUILD_DIR)" --target pcsc_fido_unit_tests \
 	  -j$$(nproc 2>/dev/null || echo 2)
 	@ctest --test-dir "$(TEST_BUILD_DIR)" --output-on-failure
+	@bash "$(CURDIR)/.github/scripts/verify-scrub-mutants.sh" --build-dir "$(TEST_BUILD_DIR)"
 
 asan: ensure-build-owner maybe-deps
 	@bash "$(CURDIR)/make/wipe-host-build-trees.sh" test
@@ -119,6 +120,9 @@ verify: ensure-build-owner maybe-deps
 	@PCSC_FIDO_KEEP_HOST_BUILDS=1 $(MAKE) ubsan INSTALL_DEPS=0
 	@PCSC_FIDO_KEEP_HOST_BUILDS=1 $(MAKE) tsan INSTALL_DEPS=0
 	@PCSC_FIDO_KEEP_HOST_BUILDS=1 $(MAKE) valgrind INSTALL_DEPS=0
+	@cmake -S . -B "$(CURDIR)/build/ci-release" -DCMAKE_BUILD_TYPE=Release \
+	  -DCMAKE_INSTALL_PREFIX="$(INSTALL_PREFIX)" -DBUILD_TESTING=ON
+	@bash "$(CURDIR)/.github/scripts/verify-release-compile-flags.sh" "$(CURDIR)/build/ci-release"
 
 tsan: ensure-build-owner maybe-deps
 	@bash "$(CURDIR)/make/wipe-host-build-trees.sh" test
@@ -153,6 +157,7 @@ lint: require-lint-kit ensure-build-owner maybe-deps lint-self-test
 	      bash "$(CURDIR)/make/wipe-host-build-trees.sh" lint; \
 	    fi ;; \
 	esac
+	@bash "$(CURDIR)/.github/scripts/verify-script-callers.sh"
 	@bash "$(LINT_KIT)/lint-c-cpp.sh" precheck
 	@bash "$(LINT_KIT)/lint-c-cpp.sh" lint $(LINT_FLAGS)
 
@@ -177,8 +182,11 @@ lint-self-test: require-lint-kit
 fuzz: refuse-root
 	@PCSC_FIDO_AUTO_FUZZ_DEPS=1 bash "$(CURDIR)/.github/scripts/run-local-fuzz.sh" $(FUZZ_FLAGS)
 
+cbmc: refuse-root
+	@bash "$(CURDIR)/.github/scripts/run-local-cbmc.sh"
+
 security-lint:
-	@bash "$(CURDIR)/.github/scripts/run-security-suite-locally.sh"
+	@bash "$(CURDIR)/.github/scripts/run-security-suite-locally.sh" $(SECURITY_LINT_FLAGS)
 
 # Forward LINT_KIT when set on the command line or in the environment; otherwise
 # unset Make's default so scripts clone toolchain.lint_kit from lint-c-cpp.yaml.
@@ -234,12 +242,17 @@ uninstall:
 	@BUILD_DIR="$(BUILD_DIR)" INSTALL_PREFIX="$(INSTALL_PREFIX)" \
 	  bash "$(CURDIR)/.github/scripts/uninstall-built-tree.sh"
 
-package:
-	@$(MAKE) build INSTALL_DEPS="$(INSTALL_DEPS)" PCSC_FIDO_DEPS_SCOPE=package
-	@if ! command -v dpkg-deb >/dev/null 2>&1 && ! command -v rpmbuild >/dev/null 2>&1; then \
-	  printf 'warning: neither dpkg-deb nor rpmbuild found; CPack emits TGZ only (install via: make deps)\n' >&2; \
-	fi
-	@cmake --build "$(BUILD_DIR)" --target package
+# Release packages for this host arch (amd64|arm64), on the host, through the same
+# release-build-package.sh as the Release workflow and
+# `make ci-local CI_LOCAL_FLAGS="--release-arch <host>"`: fresh build/release-<fmt>-<arch>
+# tree, CMAKE_BUILD_TYPE=Release (LTO, strip, no .comment), ctest, CPack, then
+# verify-glibc-ceiling.sh + verify-release-elf-hardening.sh on the packaged binary.
+# Artifacts land in dist/. PACKAGE_FORMAT=auto builds every format whose packager is
+# installed (dpkg-deb -> deb, rpmbuild -> rpm). Debug binaries: make debug.
+PACKAGE_FORMAT ?= auto
+package: PCSC_FIDO_DEPS_SCOPE=package
+package: ensure-build-owner maybe-deps
+	@PACKAGE_FORMAT="$(PACKAGE_FORMAT)" bash "$(CURDIR)/make/package-host.sh"
 
 clean: refuse-root
 	@bash .github/scripts/helper-clean-build-tree.sh $(BUILD_TREES)
@@ -252,21 +265,22 @@ help:
 	  '  sudo make install         Install Release pcsc-fido + packaging files (no tests)' \
 	  '  sudo make install-debug   Install Debug pcsc-fido and enable PCSC_FIDO_DEBUG logs' \
 	  '  sudo make uninstall       Strictly purge source install only (use dnf/apt remove for release packages)' \
-	  '  make test                 Run unit tests (plain build)' \
+	  '  make test                 Unit tests on build/unit, then the scrub-mutant sweep' \
 	  '  make fuzz                 Local libFuzzer (FUZZ_SECONDS=180 default; FUZZ_FLAGS for script opts)' \
+	  '  make cbmc                 CBMC proofs for APDU, CBOR, and CTAPHID reassembly (needs cbmc)' \
 	  '  make verify               Full verification: plain, ASan, UBSan, TSan, Valgrind (needs valgrind)' \
-	  '  make lint                 Org lint kit: format, clang-tidy, cppcheck, OpenSSF flag audit, policy checks' \
-	  '  make security-lint        zizmor, actionlint and TruffleHog' \
+	  '  make lint                 Org C/C++ lint (format, tidy, cppcheck, policy)' \
+	  '  make security-lint        zizmor, actionlint and TruffleHog (SECURITY_LINT_FLAGS=--network adds OSV-Scanner + Syft/Grype)' \
 	  '  make ci-local             Local CI replay (lint + container matrix; CI_LOCAL_FLAGS; default --main)' \
 	  '  make coverage             gcov/lcov line coverage (build/coverage-html/)' \
 	  '  make codeql-local         Local CodeQL database/analyze replay' \
 	  '  make lima                 Local CI in Lima VM (lint container; default --quick)' \
-	  '  make package              CPack TGZ/DEB/RPM (TGZ always; .deb/.rpm need dpkg-deb or rpmbuild)' \
+	  '  make package              Host-arch .deb/.rpm into dist/ (PACKAGE_FORMAT=auto|deb|rpm|both)' \
 	  '  make clean                Remove build/, build-*, .fuzz, scan-build-report, .lint-kit-org, and tool caches (not dist/)' \
 	  '  make deps                 Install Linux build/test/lint deps (run once on new machines)' \
 	  '' \
 	  'ci-local flags (make ci-local-help): --quick --main --full --coverage --release --all-release --release-arch --security --openssf --lima' \
 	  '  example: make ci-local CI_LOCAL_FLAGS="--release-arch riscv64"' \
 	  '' \
-	  'Variables: INSTALL_DEPS=1 auto-runs make deps before build/test/package/verify (default 0); PCSC_FIDO_DEPS_SCOPE=build|package|verify|full; BUILD_DIR, TEST_BUILD_DIR, INSTALL_PREFIX, INSTALL_BUILD_TYPE' \
+	  'Variables: INSTALL_DEPS=1 auto-runs make deps before build/test/verify/lint/package (default 0); PCSC_FIDO_DEPS_SCOPE=build|package|verify|full; BUILD_DIR, TEST_BUILD_DIR, INSTALL_PREFIX, INSTALL_BUILD_TYPE' \
 	  '  PCSC_FIDO_KEEP_HOST_BUILDS=1  Skip wipe for make test/lint/verify only (CI always wipes CMake trees)'

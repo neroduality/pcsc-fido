@@ -65,6 +65,7 @@ enum {
   AUTHDATA_58_MOCK_RESP_LEN = 64,
 };
 #include "pcsc_fido/ctaphid.h"
+#include "pcsc_fido/daemon_rate_limit.h"
 #include "pcsc_fido/pcsc_bridge.h"
 
 #include "mock_pcsc.h"
@@ -77,7 +78,9 @@ enum {
 #include <string.h>
 #include <time.h>
 #include "pcsc_fido/mem_util.h"
+#include "pcsc_fido/pcsc_bridge_limits.h"
 #include "pcsc_fido/pcsc_log.h"
+#include "scrub_hook.h"
 
 static time_t g_fake_time = FAKE_TIME_START;
 
@@ -87,12 +90,16 @@ int __wrap_nanosleep(const struct timespec* req PCSC_FIDO_MAYBE_UNUSED,
   return 0;
 }
 
-time_t __wrap_time(time_t* t) {
-  g_fake_time++;
-  if (t != PCSC_FIDO_NULL) {
-    *t = g_fake_time;
+extern int __real_clock_gettime(clockid_t clock_id, struct timespec* ts);
+
+int __wrap_clock_gettime(clockid_t clock_id, struct timespec* ts) {
+  if (clock_id != CLOCK_MONOTONIC || ts == PCSC_FIDO_NULL) {
+    return __real_clock_gettime(clock_id, ts);
   }
-  return g_fake_time;
+  g_fake_time++;
+  ts->tv_sec = g_fake_time;
+  ts->tv_nsec = 0;
+  return 0;
 }
 
 static int failures;
@@ -109,6 +116,7 @@ static void bridge_setup(void) {
   mock_pcsc_reset();
   mock_pcsc_set_readers("Test NFC Reader 00 00\0\0");
   pcsc_fido_bridge_reset();
+  pcsc_fido_rate_limit_reset();
   unsetenv("PCSC_FIDO_READER");
 }
 
@@ -139,6 +147,26 @@ static void invalid_exchange_arguments(void) {
             response, sizeof(response), &response_len, err, sizeof(err)),
         "PCSC_FIDO_NULL payload with zero length rejected");
   }
+}
+
+static void prepaid_reject_does_not_leave_a_free_exchange(void) {
+  uint8_t response[INVALID_EXCHANGE_RESPONSE_CAP];
+  char err[TEST_CAP_128];
+  bridge_setup();
+  setenv("PCSC_FIDO_RATE_EXCHANGE", "1", 1);
+  pcsc_fido_rate_limit_reset();
+  expect_true(pcsc_fido_rate_limit_charge_exchange(),
+              "one exchange token can be charged");
+  expect_true(!pcsc_fido_bridge_exchange(
+                  PCSC_FIDO_NULL, PCSC_FIDO_HID_CMD_CBOR, PCSC_FIDO_NULL, 1u,
+                  response, sizeof(response), PCSC_FIDO_NULL, err, sizeof(err)),
+              "invalid exchange is rejected");
+  expect_true(!pcsc_fido_rate_limit_take_exchange_charge(),
+              "the rejected exchange consumed its precharge");
+  expect_true(!pcsc_fido_rate_limit_allow_exchange(),
+              "the charged token stays spent");
+  unsetenv("PCSC_FIDO_RATE_EXCHANGE");
+  pcsc_fido_rate_limit_reset();
 }
 
 static void list_readers_success(void) {
@@ -173,6 +201,7 @@ static void exchange_getinfo_via_session(void) {
   const uint8_t mock_resp[] = {0x00u, 0xA1u, 0x01u, 0x02u, 0x90u, 0x00u};
   bridge_setup();
   mock_pcsc_set_transmit_response(mock_resp, sizeof(mock_resp));
+  scrub_hook_reset();
   expect_true(pcsc_fido_bridge_exchange(PCSC_FIDO_NULL, PCSC_FIDO_HID_CMD_CBOR,
                                         get_info, sizeof(get_info), response,
                                         sizeof(response), &response_len, err,
@@ -180,6 +209,19 @@ static void exchange_getinfo_via_session(void) {
               "getInfo exchange succeeds");
   expect_true(response_len == GETINFO_CTAP_RESPONSE_LEN && response[0] == 0x00u,
               "CTAP payload stripped");
+  /* Success path: CAPDU once. RAPDU, the SELECT output buffer, and the
+   * APDU-chain chunk are the same length (static_assert in
+   * pcsc_bridge_limits.h), so they cannot be told apart: 1 bridge RAPDU +
+   * SELECT rapdu + SELECT chain + command chain = 4. Dropping any one guard
+   * still fails here (4 -> 3); attribution comes from
+   * exchange_connect_failure (RAPDU alone, SELECT never reached) and
+   * test_apdu_chain (chunk alone, no bridge frame). */
+  expect_true(scrub_hook_calls_with_len(PCSC_FIDO_BRIDGE_MAX_APDU) == 1u,
+              "CAPDU staging buffer scrubbed");
+  expect_true(
+      scrub_hook_calls_with_len(PCSC_FIDO_BRIDGE_MAX_RESPONSE) == TEST_LIT_4U,
+      "RAPDU, SELECT response, and SELECT and command chain chunks scrubbed");
+  expect_true(scrub_hook_all_zero(), "bridge scrubs left regions zeroed");
 }
 
 static void exchange_u2f_msg(void) {
@@ -233,11 +275,19 @@ static void exchange_connect_failure(void) {
   char err[TEST_CAP_256];
   bridge_setup();
   mock_pcsc_set_connect_fail(SCARD_E_NO_SMARTCARD);
+  scrub_hook_reset();
   expect_true(!pcsc_fido_bridge_exchange(PCSC_FIDO_NULL, PCSC_FIDO_HID_CMD_CBOR,
                                          get_info, sizeof(get_info), response,
                                          sizeof(response), &response_len, err,
                                          sizeof(err)),
               "connect failure surfaces");
+  /* Connect fails in session_ensure, before the CAPDU is packed. Scope-exit
+   * still wipes both staging buffers; transmit never ran. */
+  expect_true(scrub_hook_calls_with_len(PCSC_FIDO_BRIDGE_MAX_APDU) == 1u,
+              "CAPDU scrubbed on connect failure");
+  expect_true(scrub_hook_calls_with_len(PCSC_FIDO_BRIDGE_MAX_RESPONSE) == 1u,
+              "RAPDU scrubbed on connect failure");
+  expect_true(scrub_hook_all_zero(), "error-path scrubs left regions zeroed");
 }
 
 static void exchange_connect_raw_protocol(void) {
@@ -1274,6 +1324,7 @@ static void exchange_ensure_failure_after_session_reset(void) {
 
 int main(void) {
   invalid_exchange_arguments();
+  prepaid_reject_does_not_leave_a_free_exchange();
   list_readers_success();
   list_readers_invalid_output();
   list_readers_establish_failure();

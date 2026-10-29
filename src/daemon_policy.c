@@ -88,3 +88,43 @@ bool pcsc_fido_daemon_is_terminal_webauthn_request(uint8_t cmd,
          !pcsc_fido_daemon_get_assertion_has_empty_client_data_hash(
              payload, payload_len);
 }
+
+bool pcsc_fido_daemon_is_get_next_assertion(uint8_t hid_cmd,
+                                            const uint8_t* payload,
+                                            size_t payload_len) {
+  return hid_cmd == PCSC_FIDO_HID_CMD_CBOR && payload != PCSC_FIDO_NULL &&
+         payload_len > 0u &&
+         payload[0] == PCSC_FIDO_CTAP2_CMD_GET_NEXT_ASSERTION;
+}
+
+size_t pcsc_fido_daemon_get_assertion_credential_count(const uint8_t* response,
+                                                       size_t response_len) {
+  size_t off = 1u;
+  size_t pairs = 0u;
+  if (response == PCSC_FIDO_NULL || response_len <= 1u ||
+      response[0] != PCSC_FIDO_CTAP2_OK) {
+    return 0u;
+  }
+  if (!pcsc_fido_cbor_read_type_len(response, response_len, &off,
+                                    PCSC_FIDO_CBOR_MAJOR_MAP, &pairs)) {
+    return 0u;
+  }
+  for (size_t i = 0u; i < pairs; i++) {
+    size_t key = 0u;
+    if (!pcsc_fido_cbor_read_uint_value(response, response_len, &off, &key)) {
+      return 0u;
+    }
+    if (key == PCSC_FIDO_GET_ASSERTION_RESP_KEY_NUMBER_OF_CREDENTIALS) {
+      size_t count = 0u;
+      if (!pcsc_fido_cbor_read_uint_value(response, response_len, &off,
+                                          &count)) {
+        return 0u;
+      }
+      return count;
+    }
+    if (!pcsc_fido_cbor_skip_item(response, response_len, &off)) {
+      return 0u;
+    }
+  }
+  return 0u;
+}

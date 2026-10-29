@@ -20,6 +20,8 @@
 
 #include <errno.h>
 #include <pthread.h>
+#include <sched.h>
+#include <stdlib.h>
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -28,12 +30,19 @@
 
 enum {
   WAIT_TIMEOUT_SEC = 5,
+  NEGATIVE_WAKE_WAIT_MS = 300,
+  MS_PER_SEC = 1000,
+  NS_PER_MS = 1000000L,
+  NS_PER_SEC = 1000000000L,
 };
 
 // rem matches nanosleep(2); LD --wrap requires a non-const second parameter.
 int __wrap_nanosleep(const struct timespec* req, struct timespec* rem) {
   (void)req;
   (void)rem;
+  /* A pure return spins the monitor thread. Valgrind does not preempt a guest
+   * that never enters the kernel, so the waiter never sets stop. */
+  (void)sched_yield();
   return 0;
 }
 
@@ -141,9 +150,71 @@ static void monitor_survives_establish_failure(void) {
   pthread_mutex_destroy(&wakeups.mutex);
 }
 
+static unsigned wait_for_wake_ms(wake_state_t* state, int wait_ms) {
+  struct timespec deadline;
+  unsigned count;
+  if (state == PCSC_FIDO_NULL ||
+      clock_gettime(CLOCK_REALTIME, &deadline) != 0) {
+    return 0u;
+  }
+  deadline.tv_sec += wait_ms / MS_PER_SEC;
+  deadline.tv_nsec += (long)(wait_ms % MS_PER_SEC) * NS_PER_MS;
+  if (deadline.tv_nsec >= NS_PER_SEC) {
+    deadline.tv_sec++;
+    deadline.tv_nsec -= NS_PER_SEC;
+  }
+  pthread_mutex_lock(&state->mutex);
+  while (state->count == 0u) {
+    if (pthread_cond_timedwait(&state->cond, &state->mutex, &deadline) ==
+        ETIMEDOUT) {
+      break;
+    }
+  }
+  count = state->count;
+  pthread_mutex_unlock(&state->mutex);
+  return count;
+}
+
+static void sam_or_other_reader_does_not_arm(void) {
+  static const bool PRESENT_EDGE_SEQUENCE[] = {false, true, true};
+  pcsc_fido_card_monitor_t monitor;
+  wake_state_t wakeups = {PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER,
+                          &monitor, 0u};
+  mock_pcsc_reset();
+  mock_pcsc_set_readers("Reader SAM 00 00");
+  mock_pcsc_set_status_present_sequence(
+      PRESENT_EDGE_SEQUENCE,
+      sizeof(PRESENT_EDGE_SEQUENCE) / sizeof(PRESENT_EDGE_SEQUENCE[0]));
+  expect_true(pcsc_fido_card_monitor_start(&monitor, wake_count, &wakeups),
+              "monitor starts");
+  expect_true(wait_for_wake_ms(&wakeups, NEGATIVE_WAKE_WAIT_MS) == 0u,
+              "a SAM slot does not arm the virtual key");
+  pcsc_fido_card_monitor_stop(&monitor);
+  pthread_cond_destroy(&wakeups.cond);
+  pthread_mutex_destroy(&wakeups.mutex);
+
+  wakeups = (wake_state_t){PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER,
+                           &monitor, 0u};
+  mock_pcsc_reset();
+  setenv("PCSC_FIDO_READER", "Nope", 1);
+  mock_pcsc_set_readers("Monitor Test Reader 00 00");
+  mock_pcsc_set_status_present_sequence(
+      PRESENT_EDGE_SEQUENCE,
+      sizeof(PRESENT_EDGE_SEQUENCE) / sizeof(PRESENT_EDGE_SEQUENCE[0]));
+  expect_true(pcsc_fido_card_monitor_start(&monitor, wake_count, &wakeups),
+              "monitor starts");
+  expect_true(wait_for_wake_ms(&wakeups, NEGATIVE_WAKE_WAIT_MS) == 0u,
+              "PCSC_FIDO_READER ignores a different reader");
+  pcsc_fido_card_monitor_stop(&monitor);
+  unsetenv("PCSC_FIDO_READER");
+  pthread_cond_destroy(&wakeups.cond);
+  pthread_mutex_destroy(&wakeups.mutex);
+}
+
 int main(void) {
   absent_to_present_wakes();
   initially_present_requires_fresh_edge();
   monitor_survives_establish_failure();
+  sam_or_other_reader_does_not_arm();
   return failures == 0 ? 0 : 1;
 }

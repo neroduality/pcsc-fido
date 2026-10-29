@@ -25,7 +25,7 @@
 #   PCSC_FIDO_ALLOW_SUDO_DEPS=1 allow sudo apt/dnf when not root (local opt-in; auto in GITHUB_ACTIONS)
 #   PCSC_FIDO_DEPS_SCOPE=build|package|verify|full
 #     build   -- compile/test deps (make build/test)
-#     package -- build + native CPack tools (make package)
+#     package -- build + native CPack tools (make package / release-build-package.sh)
 #     verify  -- build + sanitizer runtime + valgrind (make verify/valgrind)
 #     full    -- lint/CI toolchain (default when unset; make lint/deps)
 set -euo pipefail
@@ -130,6 +130,25 @@ as_root() {
     printf '      or:   make deps PCSC_FIDO_ALLOW_SUDO_DEPS=1\n' >&2
     return 1
   fi
+}
+
+# Debian clang-tools ships scan-build and clang-N. llvm-ar-N and llvm-ranlib-N
+# are in llvm-N; llvm-N-linker-tools is only the gold LTO plugin. Without them
+# ccc-analyzer configure runs CMAKE_C_COMPILER_RANLIB-NOTFOUND.
+pcsc_fido_install_debian_llvm_binutils() {
+  local scan_build_path ver
+  command -v apt-get >/dev/null 2>&1 || return 0
+  [[ ${EUID} -eq 0 ]] || return 0
+  command -v scan-build >/dev/null 2>&1 || return 0
+  scan_build_path="$(readlink -f -- "$(command -v scan-build)" 2>/dev/null || true)"
+  [[ ${scan_build_path} =~ scan-build-([0-9]+) ]] || return 0
+  ver="${BASH_REMATCH[1]}"
+  if command -v "llvm-ar-${ver}" >/dev/null 2>&1 &&
+    command -v "llvm-ranlib-${ver}" >/dev/null 2>&1; then
+    return 0
+  fi
+  printf -- '-- apt-get: llvm-%s (llvm-ar/llvm-ranlib for scan-build) --\n' "${ver}" >&2
+  as_root apt-get install -y --no-install-recommends "llvm-${ver}"
 }
 
 pcsc_fido_version_ge() {
@@ -813,6 +832,10 @@ install_markdownlint() {
 }
 
 deps_scope="$(pcsc_fido_deps_scope)"
+
+if [[ ${deps_scope} == build || ${deps_scope} == full ]]; then
+  pcsc_fido_install_debian_llvm_binutils
+fi
 
 if [[ ${deps_scope} == build ]] && pcsc_fido_build_tools_ok; then
   pcsc_fido_verify_gcc_min

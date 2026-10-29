@@ -21,12 +21,14 @@
 #   1. zizmor (GitHub Actions security audit)
 #   2. actionlint (GitHub Actions workflow correctness + embedded shellcheck)
 #   3. TruffleHog (secret scan)
+#   4. --network only: OSV-Scanner, then Syft -> Grype (local replay of the
+#      manual osv-scanner.yml / supply-chain-sbom.yml; pulls vuln DBs)
 #
 # SPDX headers are enforced by ``make lint`` (see ci-lint.sh), not here.
 # CodeQL runs via `.github/workflows/codeql.yml` only (not ``make lint`` / ``make verify``).
 #
 # Usage:
-#   bash .github/scripts/run-security-suite-locally.sh
+#   bash .github/scripts/run-security-suite-locally.sh [--network]
 #   CONTAINER_ENGINE=podman bash .../run-security-suite-locally.sh
 #
 set -euo pipefail
@@ -39,11 +41,12 @@ Tools (in order):
   1. zizmor                      GitHub Actions workflow security audit
   2. actionlint                  GitHub Actions workflow correctness (+ shellcheck)
   3. TruffleHog                  Secret scan
+  4. OSV-Scanner, Syft -> Grype  Only with --network (downloads vulnerability DBs)
 
 Requires: docker or podman (zizmor/actionlint fall back to containers; TruffleHog needs one).
 
 Usage:
-  bash .github/scripts/run-security-suite-locally.sh [-h|--help]
+  bash .github/scripts/run-security-suite-locally.sh [--network] [-h|--help]
 
 Environment:
   CONTAINER_ENGINE   docker (default) or podman
@@ -57,9 +60,14 @@ REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 # shellcheck source=helper-container-engine.sh
 source "${SCRIPT_DIR}/helper-container-engine.sh"
 
+with_network=0
 if [[ ${1:-} == "-h" || ${1:-} == "--help" ]]; then
   usage
   exit 0
+fi
+if [[ ${1:-} == "--network" ]]; then
+  with_network=1
+  shift
 fi
 
 if [[ $# -gt 0 ]]; then
@@ -109,5 +117,13 @@ bash "${SCRIPT_DIR}/run-actionlint-locally.sh" -color
 
 banner "TruffleHog"
 bash "${SCRIPT_DIR}/run-trufflehog-locally.sh"
+
+if ((with_network)); then
+  banner "OSV-Scanner"
+  bash "${SCRIPT_DIR}/run-local-osv-scanner.sh"
+
+  banner "Syft -> Grype"
+  bash "${SCRIPT_DIR}/run-local-supply-chain.sh"
+fi
 
 printf '\n-- Security suite finished --\n'

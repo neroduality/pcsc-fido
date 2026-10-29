@@ -15,8 +15,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Reproduce GitHub Actions CodeQL locally: isolated work tree + debian:sid-slim
-# + CodeQL database create around .github/scripts/ci-codeql-build.sh.
+# Reproduce GitHub Actions CodeQL locally: isolated work tree + the pinned
+# CodeQL container (helper-codeql-pins.sh) + database create around
+# .github/scripts/ci-codeql-build.sh.
 #
 # Paths stay under build/ (make clean removes them) and stay disjoint so the
 # traced CMake wipe cannot delete the CLI or database (matches GHA: tools/DB
@@ -40,9 +41,13 @@ Options:
 
 Environment:
   CONTAINER_ENGINE              docker (default) or podman
-  CODEQL_IMAGE                  Container image (default: debian:sid-slim digest)
+  CODEQL_IMAGE                  Container image (default: helper-codeql-pins.sh
+                                docker.io/library/debian:sid-slim@sha256:...)
   CI_PLATFORM                   Container platform (default: linux/amd64)
-  CODEQL_CLI_VERSION            CodeQL CLI version (default: v2.26.3)
+  CODEQL_CLI_VERSION            CodeQL CLI version (default: helper-codeql-pins.sh)
+  CODEQL_CLI_SHA256             Pinned codeql-linux64.zip SHA256 (default:
+                                helper-codeql-pins.sh; required when
+                                CODEQL_CLI_VERSION is not the default)
   CODEQL_QUERY_SUITE            Optional path or pack:suite override
   CODEQL_SUITE_FILE             Suite basename under cpp-queries (default: cpp-security-and-quality.qls)
   CODEQL_PACK_SCOPE             Pack to download (default: codeql/cpp-queries)
@@ -59,6 +64,9 @@ USAGE
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 
+# shellcheck source=helper-codeql-pins.sh
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/helper-codeql-pins.sh"
 # shellcheck source=helper-container-bind-mount.sh
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/helper-container-bind-mount.sh"
@@ -139,9 +147,16 @@ resolve_codeql() {
     exit 1
   fi
 
-  local version cache asset zip_path checksum_path expected_hash actual_hash extract_root
-  # Must track registry packs (cpp-queries@1.8.1 needs CLI 2.26.3 OCI manifest support).
-  version="${CODEQL_CLI_VERSION:-v2.26.3}"
+  local version cache asset zip_path checksum_path expected_hash actual_hash hash_ok extract_root
+  # Must track registry packs (the pinned cpp-queries pack needs the OCI manifest
+  # support of CLI >= 2.26.3; keep in step with the CodeQL action bundle).
+  # Pinned SHA256 of codeql-linux64.zip (helper-codeql-pins.sh). Not TOFU: the
+  # upstream .checksum.txt is same-origin as the zip, so it is only a secondary
+  # check. Overriding CODEQL_CLI_VERSION requires CODEQL_CLI_SHA256 as well;
+  # codeql_pins_resolve_cli enforces that (host already did, before download).
+  codeql_pins_resolve_cli || exit 1
+  version="${CODEQL_CLI_VERSION}"
+  local pinned_hash="${CODEQL_CLI_SHA256}"
   # Sibling of build/codeql-cmake and build/codeql -- never under a path the traced
   # build rm -rf's (GitHub database-create: keep tools/DB out of the build wipe dir).
   cache="${CODEQL_CACHE:-${PCSC_FIDO_ROOT}/build/codeql-cli}"
@@ -160,9 +175,13 @@ resolve_codeql() {
       "https://github.com/github/codeql-cli-binaries/releases/download/${version}/${asset}.checksum.txt"
     expected_hash="$(awk '{print $1}' "${checksum_path}")"
     actual_hash="$(sha256sum "${zip_path}.part" | awk '{print $1}')"
-    if [[ ${actual_hash} != "${expected_hash}" ]]; then
+    hash_ok=1
+    [[ ${actual_hash} == "${pinned_hash}" ]] || hash_ok=0
+    [[ ${actual_hash} == "${expected_hash}" ]] || hash_ok=0
+    if [[ ${hash_ok} -ne 1 ]]; then
       rm -f "${zip_path}.part" "${checksum_path}"
-      printf 'error: SHA256 mismatch for %s\n' "${asset}" >&2
+      printf 'error: SHA256 mismatch for %s (pinned %s, upstream %s, got %s)\n' \
+        "${asset}" "${pinned_hash}" "${expected_hash}" "${actual_hash}" >&2
       exit 1
     fi
     mv -f "${zip_path}.part" "${zip_path}"
@@ -372,6 +391,13 @@ if [[ ! -f ${SOURCE_ROOT}/CMakeLists.txt || ! -d ${SOURCE_ROOT}/src ]]; then
   exit 1
 fi
 
+# Fail before the work tree / container when CODEQL_CLI_VERSION is overridden
+# without CODEQL_CLI_SHA256 (never forward the default hash for another
+# version), and when codeql.yml has drifted from helper-codeql-pins.sh (the
+# workflow can only mirror the pins; refuse a replay that no longer matches GHA).
+codeql_pins_resolve_cli || exit 1
+codeql_pins_check_workflow "${SOURCE_ROOT}/.github/workflows/codeql.yml" || exit 1
+
 if ! pcsc_fido_require_container_engine >/dev/null; then
   exit 1
 fi
@@ -415,10 +441,11 @@ rsync -a --delete \
 _CI_LOCAL_WORK_ROOT_TO_CLEAN="${WORK_ROOT}"
 trap codeql_local_cleanup_worktree EXIT
 
-CODEQL_IMAGE="${CODEQL_IMAGE:-debian:sid-slim@sha256:54f7a23f03be1e9fe2849c61a7455588ea29b84c1659440f8ece2aea4c9871af}"
+CODEQL_IMAGE="${CODEQL_IMAGE:-${CODEQL_IMAGE_DEFAULT}}"
 mkdir -p "${SOURCE_ROOT}/build/codeql"
 
-printf '\n-- CodeQL: container %s (cold; no host CodeQL caches) --\n' "${CODEQL_IMAGE}"
+printf '\n-- CodeQL: container %s (CLI %s; cold; no host CodeQL caches) --\n' \
+  "${CODEQL_IMAGE}" "${CODEQL_CLI_VERSION}"
 # Default restore paths (build, .lint-kit-org, …) like nero-nfc codeql-local.
 pcsc_fido_run_bind_mount_container \
   -- \
@@ -428,7 +455,8 @@ pcsc_fido_run_bind_mount_container \
   -e "PCSC_FIDO_ROOT=/src" \
   -e "HOST_UID=$(id -u)" \
   -e "HOST_GID=$(id -g)" \
-  -e "CODEQL_CLI_VERSION=${CODEQL_CLI_VERSION:-v2.26.3}" \
+  -e "CODEQL_CLI_VERSION=${CODEQL_CLI_VERSION}" \
+  -e "CODEQL_CLI_SHA256=${CODEQL_CLI_SHA256}" \
   -e "CODEQL_QUERY_SUITE=${CODEQL_QUERY_SUITE:-}" \
   -e "CODEQL_SUMMARIZE_SARIF=${SUMMARIZE_SARIF}" \
   -e "CODEQL_OPEN_SARIF=0" \

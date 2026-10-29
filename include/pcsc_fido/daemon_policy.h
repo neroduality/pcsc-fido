@@ -29,6 +29,8 @@
 enum {
   PCSC_FIDO_CLIENT_DATA_HASH_LEN = 32u,                 /* [CTAP2.3] */
   PCSC_FIDO_GET_ASSERTION_KEY_CLIENT_DATA_HASH = 0x02u, /* [CTAP2.3] §6.2 */
+  PCSC_FIDO_GET_ASSERTION_RESP_KEY_NUMBER_OF_CREDENTIALS =
+      0x05u, /* [CTAP2.3] §6.2 */
 };
 
 // SHA-256 of the empty byte string. Browsers send this as the clientDataHash on
@@ -53,3 +55,12 @@ pcsc_fido_daemon_get_assertion_has_empty_client_data_hash(
 
 PCSC_FIDO_NODISCARD bool pcsc_fido_daemon_is_terminal_webauthn_request(
     uint8_t cmd, const uint8_t* payload, size_t payload_len);
+
+PCSC_FIDO_NODISCARD bool pcsc_fido_daemon_is_get_next_assertion(
+    uint8_t hid_cmd, const uint8_t* payload, size_t payload_len);
+
+// numberOfCredentials (map key 0x05) from a getAssertion response as the
+// bridge returns it (CTAP status byte, then the CBOR map). 0 when the status
+// is not CTAP2_OK, the member is absent, or the map is malformed.
+PCSC_FIDO_NODISCARD size_t pcsc_fido_daemon_get_assertion_credential_count(
+    const uint8_t* response, size_t response_len);

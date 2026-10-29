@@ -17,13 +17,19 @@
 # Reference RPM spec for metadata and manual rpmbuild.
 # Release packages are built with CPack (`make package`); scriptlets live only in
 # packaging/scripts/{postinst,postrm,prerm} and are embedded or %include'd below.
+#
+# Version is injected at build time so CMakeLists.txt `project(... VERSION ...)`
+# stays the single source of truth -- this spec hardcodes no real version.
+# Supply it for a manual build, e.g.:
+#   rpmbuild -ba packaging/rpm/pcsc-fido.spec --define 'pcsc_fido_version 0.3.0'
+# (CPack injects the CMake project version automatically for release packages.)
 
 Name:           pcsc-fido
-Version:        0.1.0
+Version:        %{?pcsc_fido_version}%{!?pcsc_fido_version:0.0.0}
 Release:        1%{?dist}
 Summary:        Middleware bridging PC/SC NFC FIDO to browser WebAuthn (daemon side)
 License:        Apache-2.0
-BuildRequires:  cmake >= 3.20
+BuildRequires:  cmake >= 3.21
 BuildRequires:  gcc
 BuildRequires:  make
 BuildRequires:  pkgconfig(libpcsclite)
@@ -47,7 +53,7 @@ cross-compiled for armhf, ppc64el, riscv64, and s390x.
 %autosetup -n pcsc-fido-%{version}
 
 %build
-%cmake
+%cmake -DHARDENING_WERROR=OFF
 %cmake_build
 
 %check

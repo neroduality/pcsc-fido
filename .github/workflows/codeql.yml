@@ -14,10 +14,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Code scanning -- C via CMake build of pcsc-fido (Debian sid container, same
-# family as Main CI).
+# Code scanning -- C via CMake build of pcsc-fido.
+# Container image + CLI bundle pins live in .github/scripts/helper-codeql-pins.sh
+# (tag@digest). Keep `container.image` and `tools:` below in lockstep with that
+# file; local reproduction (`make codeql-local`) sources the helper.
 # Runs on manual dispatch only.
-# Local reproduction: make codeql-local
 # Download SARIF: workflow run -> Artifacts -> codeql-cpp-sarif
 name: CodeQL
 
@@ -41,7 +42,8 @@ jobs:
     name: Analyze (cpp)
     runs-on: ubuntu-24.04
     container:
-      image: debian:sid-slim@sha256:54f7a23f03be1e9fe2849c61a7455588ea29b84c1659440f8ece2aea4c9871af
+      # Keep in lockstep with CODEQL_IMAGE_DEFAULT in helper-codeql-pins.sh.
+      image: docker.io/library/debian:sid-slim@sha256:5ac67a4d7c0de96e83873e4dd8f7ea3b507ba292fb2cce60a0c3f73322df5cae
       options: --platform linux/amd64
     timeout-minutes: 360
     permissions:
@@ -86,27 +88,29 @@ jobs:
         run: bash .github/scripts/install-linux-deps.sh
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           languages: cpp
           build-mode: manual
           config-file: .github/codeql/codeql-config.yml
-          # Bundle URL required (bare "2.26.3" is treated as a local path). Matches local CLI v2.26.3.
-          tools: https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.26.3/codeql-bundle-linux64.tar.zst
+          # Bundle URL required (bare "2.27.3" is treated as a local path).
+          # CODEQL_BUNDLE_URL_DEFAULT in helper-codeql-pins.sh; CLI zip is
+          # codeql-linux64.zip v2.27.3 / SHA256 CODEQL_CLI_SHA256_DEFAULT.
+          tools: https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.27.3/codeql-bundle-linux64.tar.zst
 
       - name: CodeQL traced build (CMake)
         run: bash .github/scripts/ci-codeql-build.sh
 
       - name: Perform CodeQL analysis
         id: analyze
-        uses: github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           category: "/language:cpp"
           output: codeql-results
 
       - name: Upload CodeQL SARIF artifact
         if: always() && steps.analyze.outcome != 'skipped'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: codeql-cpp-sarif
           path: codeql-results/

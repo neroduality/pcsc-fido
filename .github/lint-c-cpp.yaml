@@ -105,6 +105,16 @@ policy:
     openssf-hardening:
       add: null
       by_compile_db: null
+      cross:
+        - -fexceptions
+        - -pie
+        - "LINKER:--error-execstack"
+        - "LINKER:--error-rwx-segments"
+        - "LINKER:-z,noexecstack"
+        - "LINKER:-z,now"
+        - "LINKER:-z,pack-relative-relocs"
+        - "LINKER:-z,relro"
+        - "LINKER:-z,text"
       remove: null
   resource_lifetime: null
   shared_c_cxx_source_roots: null
@@ -135,7 +145,7 @@ spec_traceability:
 toolchain:
   lint_kit:
     path: lint-c-cpp
-    ref: v0.3.0
+    ref: v0.4.0
     repository: neroduality/.github
   script: null
 

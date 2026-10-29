@@ -15,39 +15,74 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-# Remediations and limits
+# Security model and limits
 
-**pcsc-fido** is a stopgap for Linux browsers that speak WebAuthn only over **CTAPHID/hidraw**, while an NFC FIDO token is a **physical card** on a CCID reader, reached through **PC/SC** (`pcscd`). It exposes a **virtual** hidraw device; the bridge is the **hidraw peer** and forwards CTAPHID to the card over PC/SC.
+Linux browsers speak WebAuthn only as CTAPHID over hidraw. An *NFC security key* (an NFC FIDO card, or an NFC-enabled security key such as a YubiKey 5 NFC) is reached through PC/SC (`pcscd`) instead. `pcsc-fido` is a stopgap between the two: it creates a *virtual key* (a virtual hidraw FIDO device) and relays CTAPHID to the NFC security key.
 
-## Bridge vs USB HID
+## Bridge vs USB security key
 
-| | USB HID key | pcsc-fido + NFC |
-| - | ----------- | --------------- |
-| Path | USB HID -> **hidraw** (CTAPHID to token firmware) | Browser -> **hidraw** (virtual key) -> kernel UHID -> **/dev/uhid** (bridge) -> **pcscd** -> reader -> NFC token |
-| Browser visibility | While plugged in | Default **tap-arm**: hidden until a card is present, armed for a timed window (`PCSC_FIDO_ARM_SEC`), and re-armed only after an absent -> present transition |
-| Presence | Touch button (many models) | Tap/hold on reader; touchless cards treat tap as presence; NFC tokens with a separate touch sensor may require an additional touch when prompted |
-| PIN / UV | Browser <-> token | Same rules; bridge preserves CTAP CBOR fields (`clientPIN`, `pinUvAuthParam`, `options.uv`, etc.) and does not bypass browser PIN prompts |
-| Trust (CTAPHID) | **hidraw** peer = token firmware (USB device). Handles CTAPHID; keys on USB key. **TCB (trusted computing base):** USB FIDO gadget; host USB/hid stack; USB token firmware | **hidraw** peer = **bridge** (forwards CTAPHID over PC/SC; not NFC card firmware). Handles CTAPHID; keys on NFC card. **TCB (trusted computing base):** bridge ([shortcomings](#shortcomings)); host UHID/hid stack; pcscd; CCID reader + driver; NFC card firmware |
+| | USB security key | pcsc-fido + NFC security key |
+| - | ---------------- | ---------------------------- |
+| hidraw peer | Security key firmware | This daemon |
+| Visible to browser | While plugged in | For `PCSC_FIDO_ARM_SEC` after a tap (default 60 s) |
+| Presence | Touch | Tap/hold on reader; NFC security keys with a touch sensor may also ask for a touch |
+| PIN / UV | Browser <-> security key | Same; `clientPIN`, `pinUvAuthParam`, `options.uv` are passed through unchanged |
+| Trusted computing base | Security key firmware, host USB/HID stack | Daemon, host UHID/HID stack, `pcscd`, reader + CCID driver, NFC security key firmware |
 
-## Safeguards for `pcsc-fido` (NFC-specific)
+## Safeguards
 
-| Area | Remediation |
-| ---- | ----------- |
-| Tap-arm | Stops the card-present wake monitor while armed and drains stale wake signals on arm/expiry, so a token left on the reader cannot immediately re-arm after timeout. |
-| UHID open | Filesystem TOCTOU on `/dev/uhid` is avoided by opening the device directly (no prior `access()`). For log strings and operator steps, see [DEBUGGING.md](DEBUGGING.md). |
-| CTAP forwarding | Preserves CTAP CBOR/MSG payloads at the CTAP layer, encapsulates them as CTAP-over-NFC APDUs for PC/SC, does not synthesize CTAP responses, and keeps no compatibility cache. |
-| DoS containment | Rate-limits CTAPHID frames and PC/SC exchanges (rolling window); serializes in-flight PC/SC work; returns CTAPHID `CHANNEL_BUSY` when throttled or busy. |
-| Session cleanup | Resets CTAPHID reassembly and the PC/SC session on UHID close/stop, CTAPHID CANCEL, successful terminal WebAuthn ops (`makeCredential` and signed `getAssertion`, but not empty-hash preflight probes), arm expiry/disarm, and PC/SC transmit failures. Standalone CTAPHID CANCEL has no direct HID response; in-flight cancellation completes the original CBOR request with `CTAP2_ERR_KEEPALIVE_CANCEL`. |
-| Session concurrency | Monotonic **generation** on each `session_reset`; transmit snapshots carry `{card, pci, generation}` and are rejected after reset/cancel/close races; active transmits are tracked so `session_reset` waits to release handles, while `session_cancel` can still reach `SCardCancel` during a blocking `SCardTransmit`; `session_verify_ready` uses `SCardStatus` before reusing a cached session; reader presence is re-checked immediately before `SCardConnect`. |
-| Service hardening | Dedicated `pcsc-fido` user, polkit access to `pcscd`, active-seat `uaccess` for the virtual hidraw node, strict systemd sandbox, no root runtime. |
-| Compatibility | Reader auto-selection only when unambiguous (single reader, or a single contactless non-SAM slot from a SAM/PICC pair), card-presence tiebreaker, **FIDO probe when several readers show cards**; PC/SC reader-enumeration retry window. |
+| Area | Rule |
+| ---- | ---- |
+| Tap-arm | Monitor off while armed. Stale wakes drained on arm and expiry. Re-arm only after absent -> present. |
+| UHID | Plain `open("/dev/uhid")`, no `access()` check first (no TOCTOU). |
+| CTAP bytes | Wrapped as NFC APDUs. No synthesized or cached responses. |
+| Memory | Relayed data is wiped after use; core dumps off: [Memory hygiene](C-STYLE-CODEFLOW.md#memory-hygiene). |
+| Rate limits | Token buckets, refilled over `PCSC_FIDO_RATE_WINDOW_SEC` (90 s): `PCSC_FIDO_RATE_CTAPHID` INIT frames (60), `PCSC_FIDO_RATE_EXCHANGE` PC/SC exchanges (24). CANCEL is free. A failed monotonic clock denies. |
+| Busy | One exchange at a time. `CHANNEL_BUSY` when throttled, busy, or another channel sends INIT during reassembly. |
+| Concurrency | `session_reset` bumps a generation counter; stale `{card, pci, generation}` snapshots are rejected. Reset waits for in-flight transmits before releasing handles. |
+| Presence checks | NFC security key confirmed in the field before `SCardConnect`. Session reused only if `SCardStatus` is `SCARD_POWERED` and not `SCARD_ABSENT`. |
+| Service | User `pcsc-fido`, polkit for `pcscd`, hidraw via `uaccess`, systemd sandbox, never root. |
+| Readers | Auto-select only when unambiguous, else FIDO SELECT probe (contactless first). Enumeration retries for 10 s. |
 
-## Shortcomings
+### PC/SC session reset triggers
 
-**pcsc-fido** is a **bridge**, not a native Linux WebAuthn path (see [Trust](#bridge-vs-usb-hid)). The browser's **hidraw** peer is this daemon, not NFC card firmware; CTAPHID is forwarded over PC/SC while the card holds the signing keys. That enlarges the **trusted computing base** beyond USB's (USB FIDO gadget, host USB/hid stack, USB token firmware) to include the **bridge**, host UHID/hid stack, **pcscd**, CCID reader + driver, and NFC card firmware. The same hidraw observe/alter risk applies: a **rogue USB FIDO gadget** is a malicious peer on USB, and a **compromised bridge** is the parallel risk here.
+- **Client:** UHID close/stop (drops that client's channels), `POLLERR`/`POLLHUP`/`POLLNVAL`, short read mid-exchange, owner CANCEL, owner channel evicted, INIT on the busy channel (resync keeps the channel ID).
+- **PC/SC:** any failure after reaching the NFC security key, cancelled exchange, transmit failure, failed HID delivery.
+- **CTAP:** delivered `makeCredential` or non-probe `getAssertion` (any status; kept if `numberOfCredentials` > 1), last `getNextAssertion`, empty or failed `getNextAssertion` mid-sequence, CBOR/MSG from another channel, owner sends anything but `getNextAssertion` mid-sequence.
+- **Lifecycle:** daemon stop, arm expiry, 30 s idle.
 
-A compromised **bridge** still cannot extract private keys from the card or sign without card cooperation (tap/PIN/UV as required); honest RPs still verify challenge, origin, and `rpId`. The **bridge** also cannot fix compromised hosts, replaced packages, malicious browsers, card firmware bugs, browser/RP state, or broken **pcscd**/reader stacks. It adds timing-sensitive NFC UX and reader-selection/startup seams. It is tested on real hardware but is not a formal certification boundary.
+**No reset:** exchange thread failed to start; empty-hash `getAssertion` probe with no open sequence; `getNextAssertion` with none left; rate-limited exchange; `ERR_MSG_TIMEOUT` (wipes only the partial request).
 
-## Preferred long-term outcome
+**CANCEL replies:** standalone: none. In-flight CBOR: `CTAP2_ERR_KEEPALIVE_CANCEL`. In-flight MSG: none.
 
-The best remediation is for Linux to make this bridge obsolete: browsers and desktop credential services should reach NFC FIDO cards on CCID readers through PC/SC without a UHID shim. The likely direction is the Linux Credentials stack -- for example [libwebauthn](https://github.com/linux-credentials/libwebauthn), [credentialsd](https://github.com/linux-credentials/credentialsd), and portal integration -- so WebAuthn and `pcscd` share one platform path. Until that path is broadly shipped and used by browsers, unmodified Linux browser tabs still speak CTAPHID over hidraw, and **pcsc-fido** aims to keep this stopgap narrow, observable, packaged, and hardened.
+## How a login is verified
+
+The bridge is not part of this check; it only carries the bytes.
+
+1. The relying party (RP, the website) sends a random, single-use challenge.
+2. The browser checks that the site's origin may use the requested `rpId`, builds client data (`type`, `challenge`, `origin`), and sends its SHA-256 (`clientDataHash`) with the `rpId` to the NFC security key.
+3. The NFC security key checks user presence (and PIN/UV if required), then signs `authenticatorData` (which contains SHA-256 of the `rpId`) together with `clientDataHash`, using the credential's private key.
+4. The RP verifies the signature with the public key it stored at registration, and checks that the challenge is the one it issued, the origin is its own, and the `rpId` hash matches.
+
+So a copied signature cannot be reused for another login or another site, and nothing that crosses the bridge lets anyone sign without the NFC security key.
+
+## Limits
+
+- A compromised daemon sits after the browser's origin check. It could replace a request with one for a different RP, so the NFC security key signs that instead when you tap. The same is true of any process allowed to reach `pcscd`. The NFC security key's presence and PIN/UV checks still apply; for NFC cards without a touch sensor, presence just means being on the reader.
+- It cannot extract private keys or produce signatures without the NFC security key.
+- It does not protect against a compromised host, a replaced package, a malicious browser, NFC security key firmware bugs, or a broken `pcscd`/reader stack.
+- It adds NFC timing and reader-selection failure modes.
+- Hardware-tested, not certified.
+
+## Retirement
+
+Long-term path: browsers reach NFC security keys through [credentialsd](https://github.com/linux-credentials/credentialsd) (0.3.x, pre-1.0) on [libwebauthn](https://github.com/linux-credentials/libwebauthn), which already does NFC over PC/SC.
+
+State in October 2026: a browser extension for Firefox 140+ and Chromium/Edge 111+, an experimental portal-aware Firefox Flatpak, and `credentialsd` needs a patched `xdg-desktop-portal`. No browser ships portal support upstream.
+
+This bridge can be retired once all of these ship:
+
+1. Stable `credentialsd` / `libwebauthn` with NFC.
+2. The portal upstream in `xdg-desktop-portal`.
+3. Distros enable it.
+4. Browsers, Chromium included, use the portal instead of hidraw.

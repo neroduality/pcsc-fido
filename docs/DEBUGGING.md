@@ -15,78 +15,69 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-# Debugging pcsc-fido
-
-Reproduce with live logs:
+# Debugging
 
 ```bash
-journalctl -u pcsc-fido -u pcscd -n 0 -f --no-pager
-```
-
-Quick checks:
-
-```bash
+journalctl -u pcsc-fido -u pcscd -n 0 -f --no-pager   # live logs
 systemctl status pcsc-fido --no-pager
-ls -l /dev/uhid             # expect crw-rw---- root pcsc-fido
+ls -l /dev/uhid                                       # expect crw-rw---- root pcsc-fido
 pcsc-fido --version
-pcsc-fido --print-config    # resolved tap-arm / always mode and arm timing
+pcsc-fido --print-config                              # virtual-key mode, arm window
 pcsc-fido --list-readers
-pcsc_scan                   # optional (pcsc-tools)
+pcsc_scan                                             # optional, from pcsc-tools
 ```
 
-After install or upgrade, **`daemon-reload` does not replace a running daemon** -- restart the bridge:
+After install or upgrade, restart the service. `daemon-reload` alone keeps the old binary running:
 
 ```bash
 sudo systemctl restart pcsc-fido.service
 ```
 
-Token presence, PIN, tap-vs-touch UX, and session concurrency: [REMEDIATIONS.md](REMEDIATIONS.md#bridge-vs-usb-hid) / [Safeguards](REMEDIATIONS.md#safeguards-for-pcsc-fido-nfc-specific).
+## Debug build
 
-## Debug build (APDU / CTAP detail)
-
-Release binaries compile out protocol debug (`NDEBUG`); setting **`PCSC_FIDO_DEBUG=1` on Release has no effect**. Use a Debug source install:
+Release builds compile out protocol logging, so `PCSC_FIDO_DEBUG=1` does nothing there. For APDU/CTAP detail:
 
 ```bash
 make debug
 sudo make install-debug INSTALL_PREFIX=/usr
-journalctl -u pcsc-fido -u pcscd -n 0 -f --no-pager
 ```
 
-Hex logs may include credential IDs and challenges -- disable Debug logging when finished ([INSTALLATION.md](../INSTALLATION.md#2-source-install)).
+> **Warning:** Debug logs hex-dump up to 220 bytes of each `getAssertion` request and response and of failed responses from the NFC security key: `rpId`, `clientDataHash`, credential IDs, signatures, `pinUvAuthParam`. These are not private keys or PINs, but they identify your credentials and stay in the journal on disk. Use a test NFC security key or throwaway credentials (for example on `webauthn.io`). Reinstall Release when done ([INSTALLATION](../INSTALLATION.md#debug-install)).
 
-## Log lines worth watching
+## Log lines
 
 | Build | Substring | Meaning |
 | ----- | --------- | ------- |
-| Always | `place the NFC key on the reader to arm` | Tap-arm dormant; present token to expose the virtual key. |
-| Always | `virtual FIDO key armed` | Browser should see the key; keep the token on the reader. |
-| Always | `virtual FIDO key arm window expired` | Lift and present the token again to re-arm (or raise **`PCSC_FIDO_ARM_SEC`**). |
-| Always | `PC/SC bridge failed` | Relay error at INFO; message often includes `SCardTransmit: PC/SC 0x...`. Read the rest of the line and **`pcscd`** logs. |
-| Always | `FIDO NFC card left the reader before connect` | Token lifted between presence detection and connect -- hold on the reader and retry. |
-| Always | `PC/SC session card no longer present` | Cached session invalidated by **`SCardStatus`** -- bridge rebuilds on the next exchange. |
-| Always | `cancelled while waiting` | Bridge cancel during PC/SC reader enumeration or NFC card wait. |
-| Debug only | `completed WebAuthn operation` | Terminal **`makeCredential`** or signed **`getAssertion`**; PC/SC session reset (empty-hash preflight probes do not log this). |
-| Debug only | `SCardTransmit failed; reconnecting PC/SC session once` | Stale handle or card movement; one reconnect retry (generation-checked snapshots). |
-| Debug only | `using PC/SC reader` / `waiting for FIDO NFC card` | Reader selection and wait for token. |
-| Debug only | `SCardConnect ok` / `FIDO SELECT` / `SCardTransmit` | PC/SC session and APDU relay (`hid=0x10` CBOR, `hid=0x03` U2F MSG). |
+| All | `place the NFC key on the reader to arm` | Dormant; tap the NFC security key to create the virtual key. |
+| All | `virtual FIDO key armed` | Virtual key visible to the browser. Keep the NFC security key on the reader. |
+| All | `virtual FIDO key arm window expired` | Virtual key removed. Lift and re-tap, or raise `PCSC_FIDO_ARM_SEC`. |
+| All | `PC/SC bridge failed` | Relay error. The rest of the line (often `SCardTransmit: PC/SC 0x...`) and `pcscd` logs say why. |
+| All | `failed to deliver CTAP response` | The NFC security key answered but the HID reply was too large or the UHID write failed. Session reset. |
+| All | `... during PC/SC exchange; resetting PC/SC session` | Client closed (`UHID client closed`) or re-sent INIT (`CTAPHID channel resynchronized`) mid-exchange. Session reset. |
+| All | `FIDO NFC card left the reader before connect` | NFC security key left the field before `SCardConnect`. Hold it on the reader and retry. |
+| All | `cancelled while waiting` | CANCEL arrived during reader enumeration or while waiting for the NFC security key. |
+| Debug | `completed WebAuthn operation` | `makeCredential`, `getAssertion`, or last `getNextAssertion` delivered; session reset. |
+| Debug | `SCardTransmit failed; reconnecting PC/SC session once` | Stale handle or the NFC security key moved; one retry. |
+| Debug | `using PC/SC reader`, `waiting for FIDO NFC card` | Reader chosen; waiting for the NFC security key. |
+| Debug | `SCardConnect ok`, `FIDO SELECT`, `SCardTransmit` | Session setup and APDU relay (`hid=0x10` CBOR, `hid=0x03` U2F). |
 
 ## Common issues
 
-| Symptom | What to try |
-| ------- | ----------- |
-| No security key in the browser | Default is tap-arm: place the token on the reader until logs show `virtual FIDO key armed`, then use the browser prompt. Confirm `/dev/uhid` permissions and that `pcsc-fido.service` is active. Diagnostics only: `PCSC_FIDO_VIRTUAL_KEY=always`. |
-| Key appeared, then disappeared | Arm window expired or token left the field -- keep the token on the reader through the ceremony; lift and present again after `arm window expired`. |
-| Key visible with no token | `PCSC_FIDO_VIRTUAL_KEY=always`, or stale browser UI -- restart the service and refresh the tab. |
-| Prompt stalls / CHANNEL_BUSY | CTAPHID or PC/SC rate limit -- wait and retry. Local diagnosis only: `PCSC_FIDO_RATE_LIMIT=0` in a systemd drop-in (not for production). |
-| Wrong reader | Set `PCSC_FIDO_READER` to a stable substring; run `pcsc-fido --list-readers` to see PC/SC names. Use `pcsc-fido --print-config` only for tap-arm mode and **`PCSC_FIDO_ARM_SEC`** (not reader selection). |
-| Service will not start (`open /dev/uhid: Permission denied`, `status=217/USER`, or `/dev/uhid` missing) | `70-pcsc-fido.rules`, `pcsc-fido-uhid.conf` (boot), reinstall/postinst (`modprobe` + udev), `ensure-pcsc-fido-user.sh`, then `systemctl restart pcsc-fido.service`. |
-| Start request repeated too quickly | Fix the underlying journal error, then `systemctl reset-failed pcsc-fido.service` and restart. |
-| `SCardEstablishContext ... 0x8010006a` | PC/SC security violation -- usually `pcscd` denied the `pcsc-fido` user; confirm `50-pcsc-fido.rules` is installed (`polkitd` reloads rules automatically). Restart the bridge after fixing. |
-| `no PC/SC readers available` | Enable `pcscd.socket`, install `libccid` / `pcsc-lite-ccid`, plug/replug the reader, run `pcsc_scan`. |
-| `CmdPowerOn Card absent` / power-up errors | Token not in the NFC field -- hold it on the reader for the whole prompt. |
-| `PC/SC reader name too long` | PC/SC reader string exceeds 256 bytes -- rename the reader slot or set a shorter `PCSC_FIDO_READER` needle. |
-| Ceremony fails right after arming | Normal NFC timing: keep the token on the reader through the whole browser prompt; see [safeguards](REMEDIATIONS.md#safeguards-for-pcsc-fido-nfc-specific). |
-| `SCardListReaders ... 0x8010001d` | `pcscd` restarted while the bridge held a context -- restart `pcsc-fido.service`. |
-| `LIBUSB_ERROR_*` in `pcscd` logs | USB CCID reader/driver issue -- replug, try another port, compare with known-good hardware. |
-| Registration suddenly fails after repeated testing | NFC FIDO cards have limited credential storage; repeated `makeCredential` runs can fill the card. Reset or clear the NFC token (vendor reset/PIN management tool or card-specific factory reset), then retry. |
-| APDU success in logs, browser still fails | Often browser/RP state or a full token -- fresh tab/profile, clear site data, reset test credentials on burner tokens before changing bridge settings. |
+| Symptom | Fix |
+| ------- | --- |
+| Browser sees no security key | Tap the NFC security key and wait for `virtual FIDO key armed`. Check `/dev/uhid` permissions and that the service is active. For diagnosis only: `PCSC_FIDO_VIRTUAL_KEY=always`. |
+| Virtual key appeared, then vanished | Arm window ended. Removing the NFC security key does not hide the virtual key; it fails the next exchange instead. Re-tap. |
+| Virtual key visible with no NFC security key on the reader | `PCSC_FIDO_VIRTUAL_KEY=always` is set. Otherwise restart the service and reload the tab. |
+| Prompt stalls (`CHANNEL_BUSY`) | Sent to the browser, not logged. Rate limit hit, exchange in progress, or another channel's INIT mid-request. `PCSC_FIDO_RATE_LIMIT=0` disables only the rate limit; not for production. |
+| Wrong reader | Set `PCSC_FIDO_READER` to a substring from `pcsc-fido --list-readers`. |
+| Won't start: `open /dev/uhid: Permission denied`, `status=217/USER`, or no `/dev/uhid` | Check `70-pcsc-fido.rules` and `pcsc-fido-uhid.conf`, re-run the package install (`modprobe uhid`, udev reload, `ensure-pcsc-fido-user.sh`), then restart. |
+| `Start request repeated too quickly` | Fix the logged error, then `systemctl reset-failed pcsc-fido.service` and restart. |
+| `SCardEstablishContext ... 0x8010006a` | polkit denied `pcsc-fido`. Confirm `50-pcsc-fido.rules` is installed, then restart the service. |
+| `SCardListReaders ... 0x8010001d` | `SCARD_E_NO_SERVICE`: `pcscd` unreachable. Start `pcscd.socket`, then restart the service. |
+| `no PC/SC readers available` | Enable `pcscd.socket`, install `libccid` / `pcsc-lite-ccid`, replug the reader, check `pcsc_scan`. |
+| `CmdPowerOn Card absent`, power-up errors | The NFC security key left the field. Hold it on the reader for the whole prompt. |
+| Fails right after arming | Same: keep the NFC security key in place until the browser prompt finishes. |
+| `PC/SC reader name too long` | Reader name exceeds 256 bytes including NUL. (An overlong `PCSC_FIDO_READER` gives `no matching PC/SC reader` instead.) |
+| `LIBUSB_ERROR_*` in `pcscd` logs | Reader or USB problem. Replug, try another port or reader. |
+| Registration starts failing after many tests | The NFC security key's credential storage is full. Reset it with its vendor tool. |
+| APDUs succeed, browser still fails | Browser or site state. Try a fresh tab or profile, clear site data, or reset test credentials. |

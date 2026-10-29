@@ -81,3 +81,16 @@ void pcsc_fido_io_fputc(FILE* stream, int c) {
   (void)c;
 #endif
 }
+
+#if defined(PCSC_FIDO_TESTING)
+void pcsc_fido_io_fflush(FILE* stream) {
+#ifndef __clang_analyzer__
+  if (stream == PCSC_FIDO_NULL) {
+    return;
+  }
+  (void)fflush(stream);
+#else
+  (void)stream;
+#endif
+}
+#endif

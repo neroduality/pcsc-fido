@@ -20,7 +20,7 @@
 #
 # Usage:
 #   bash .github/scripts/run-local-osv-scanner.sh
-#   OSV_IMAGE=ghcr.io/google/osv-scanner:latest bash .../run-local-osv-scanner.sh -- --format table
+#   OSV_IMAGE=ghcr.io/google/osv-scanner:v2.7.0 bash .../run-local-osv-scanner.sh -- --format table
 #
 set -euo pipefail
 
@@ -33,7 +33,7 @@ Any arguments after `--` are forwarded to `osv-scanner scan source` (defaults: `
 Environment:
   CONTAINER_ENGINE   docker (default) or podman
   CI_PLATFORM        Unset: linux/amd64 on x86_64, else linux/$host. Empty (CI_PLATFORM=): native.
-  OSV_IMAGE          Scanner image (default: ghcr.io/google/osv-scanner:latest).
+  OSV_IMAGE          Scanner image (default: digest-pinned ghcr.io/google/osv-scanner:v2.7.0).
                      Passes --allow-no-lockfiles unless you replace argv after `--`.
 
 Examples:
@@ -59,7 +59,7 @@ if ! command -v "${ENGINE}" >/dev/null 2>&1; then
   exit 1
 fi
 
-OSV_IMAGE="${OSV_IMAGE:-ghcr.io/google/osv-scanner:latest}"
+OSV_IMAGE="${OSV_IMAGE:-ghcr.io/google/osv-scanner:v2.7.0@sha256:4f3b7e2c64b9d38a5febc5a7e4a3dfef1d1362f726dea7a2ef4762b46469fcd0}"
 
 PLATFORM_ARGS=()
 pcsc_fido_load_ci_platform_args

@@ -34,10 +34,10 @@ bool pcsc_fido_bridge_list_readers(FILE* out, char* err, size_t err_cap) {
   return pcsc_fido_reader_print_list(out, err, err_cap);
 }
 
-void pcsc_fido_bridge_reset(void) {
-  pcsc_fido_session_reset();
-  pcsc_fido_rate_limit_reset();
-}
+/* Leaves the rate-limit budgets alone: reset runs on client-triggered events
+ * (CANCEL, UHID close, completed operations), so clearing them here would let
+ * any client refill its own budget. */
+void pcsc_fido_bridge_reset(void) { pcsc_fido_session_reset(); }
 
 void pcsc_fido_bridge_cancel(void) { pcsc_fido_session_cancel(); }
 
@@ -53,10 +53,15 @@ bool pcsc_fido_bridge_exchange(const char* reader_needle, uint8_t hid_cmd,
   uint8_t capdu[PCSC_FIDO_BRIDGE_MAX_APDU];
   uint8_t rapdu[PCSC_FIDO_BRIDGE_MAX_RESPONSE];
   pcsc_fido_session_tx_t tx;
+  PCSC_FIDO_SCRUB_ON_EXIT(capdu, sizeof(capdu));
+  PCSC_FIDO_SCRUB_ON_EXIT(rapdu, sizeof(rapdu));
   size_t capdu_len = 0u;
   size_t rapdu_len = 0u;
   bool ok = false;
   bool session_error = false;
+  /* Drop a handler precharge before any early return, so a rejected call
+   * cannot leave the next exchange uncharged. */
+  const bool prepaid = pcsc_fido_rate_limit_take_exchange_charge();
   if (response_len == PCSC_FIDO_NULL || response == PCSC_FIDO_NULL ||
       (payload == PCSC_FIDO_NULL && payload_len != 0u)) {
     pcsc_fido_set_err(err, err_cap, "invalid bridge exchange arguments");
@@ -67,7 +72,7 @@ bool pcsc_fido_bridge_exchange(const char* reader_needle, uint8_t hid_cmd,
     pcsc_fido_set_err(err, err_cap, "CTAPHID payload too large");
     return false;
   }
-  if (!pcsc_fido_rate_limit_allow_exchange()) {
+  if (!prepaid && !pcsc_fido_rate_limit_allow_exchange()) {
     pcsc_fido_set_err(err, err_cap, PCSC_FIDO_ERR_MSG_RATE_LIMIT);
     return false;
   }
@@ -76,7 +81,8 @@ bool pcsc_fido_bridge_exchange(const char* reader_needle, uint8_t hid_cmd,
     return false;
   }
   if (!pcsc_fido_session_snapshot_tx(&tx, err, err_cap)) {
-    return false;
+    session_error = true;
+    goto out;
   }
   if (!pcsc_fido_session_tx_is_current(&tx)) {
     pcsc_fido_set_err(err, err_cap, "PC/SC session changed before transmit");
@@ -93,16 +99,19 @@ bool pcsc_fido_bridge_exchange(const char* reader_needle, uint8_t hid_cmd,
     if (!pcsc_fido_pack_ctap2_cbor_apdu(payload, payload_len, capdu,
                                         sizeof(capdu), &capdu_len)) {
       pcsc_fido_set_err(err, err_cap, "CTAP CBOR APDU too large");
+      session_error = true;
       goto out;
     }
   } else if (hid_cmd == PCSC_FIDO_HID_CMD_MSG) {
     if (!pcsc_fido_copy_bytes(capdu, sizeof(capdu), 0u, payload, payload_len)) {
       pcsc_fido_set_err(err, err_cap, "U2F MSG APDU too large");
+      session_error = true;
       goto out;
     }
     capdu_len = payload_len;
   } else {
     pcsc_fido_set_err(err, err_cap, "unsupported HID command for PC/SC bridge");
+    session_error = true;
     goto out;
   }
   if (pcsc_fido_bridge_debug_enabled()) {
@@ -196,14 +205,13 @@ bool pcsc_fido_bridge_exchange(const char* reader_needle, uint8_t hid_cmd,
   }
   if (!pcsc_fido_copy_bytes(response, response_cap, 0u, rapdu, rapdu_len)) {
     pcsc_fido_set_err(err, err_cap, "response buffer too small");
+    session_error = true;
     goto out;
   }
   *response_len = rapdu_len;
   ok = true;
 
 out:
-  pcsc_fido_secure_clear(capdu, sizeof(capdu));
-  pcsc_fido_secure_clear(rapdu, sizeof(rapdu));
   if (session_error) {
     pcsc_fido_session_reset();
   }

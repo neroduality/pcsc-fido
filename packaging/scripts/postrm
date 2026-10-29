@@ -16,6 +16,13 @@
 # limitations under the License.
 
 # Shared package post-removal hook (DEB/RPM via CPack; reference spec %include).
+#
+# Note: the pcsc-fido system user and group are intentionally left in place on
+# package removal. Both Fedora (systemd-sysusers) and Debian Policy keep
+# package-created system users permanent: deleting a UID/GID that may still own
+# files risks silent re-assignment of those files if the ID is later reused.
+# Only the source-tree `make uninstall` removes the account (a developer
+# teardown, not a packaged install).
 
 if command -v udevadm >/dev/null 2>&1; then
   udevadm control --reload-rules || true

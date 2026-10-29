@@ -148,31 +148,48 @@ lint_kit_prepare_writable() {
   return 1
 }
 
+lint_kit_cloned_stamp() {
+  printf '%s/.lint-kit-cloned-ref\n' "${1:?}"
+}
+
+lint_kit_stamp_matches() {
+  local stamp="$1" expected="$2"
+  [[ -f ${stamp} ]] || return 1
+  [[ $(cat "${stamp}") == "${expected}" ]]
+}
+
 lint_kit_ensure_cloned() {
   local repo_root="${1:?}"
-  local org_dir kit_root url
+  local org_dir kit_root url stamp expected
   lint_kit_load_config "${repo_root}"
   org_dir="$(lint_kit_org_dir "${repo_root}")"
   kit_root="$(lint_kit_root "${repo_root}")"
   url="$(lint_kit_clone_url "${repo_root}")"
+  stamp="$(lint_kit_cloned_stamp "${org_dir}")"
+  expected="${LINT_KIT_REPOSITORY}@${LINT_KIT_REF}"
 
-  if [[ -x ${kit_root}/lint-c-cpp.sh ]]; then
+  if [[ -x ${kit_root}/lint-c-cpp.sh ]] && lint_kit_stamp_matches "${stamp}" "${expected}"; then
     return 0
   fi
 
   if ! lint_kit_prepare_writable "${org_dir}"; then
-    printf 'error: lint kit missing and %s is not writable (cannot clone)\n' "${org_dir}" >&2
+    printf 'error: lint kit missing or stale and %s is not writable (cannot clone)\n' "${org_dir}" >&2
     printf 'hint: sudo chown -R %s:%s %s\n' "$(id -u)" "$(id -g)" "${org_dir}" >&2
     return 1
   fi
 
-  printf 'Fetching lint kit %s@%s -> %s\n' "${LINT_KIT_REPOSITORY}" "${LINT_KIT_REF}" "${org_dir}" >&2
+  if [[ -x ${kit_root}/lint-c-cpp.sh ]]; then
+    printf 'Refreshing lint kit %s -> %s\n' "${expected}" "${org_dir}" >&2
+  else
+    printf 'Fetching lint kit %s -> %s\n' "${expected}" "${org_dir}" >&2
+  fi
   rm -rf "${org_dir}"
   git clone --depth 1 --branch "${LINT_KIT_REF}" "${url}" "${org_dir}"
   if [[ ! -x ${kit_root}/lint-c-cpp.sh ]]; then
     printf 'error: lint kit missing lint-c-cpp.sh after clone: %s\n' "${kit_root}" >&2
     return 1
   fi
+  printf '%s\n' "${expected}" >"${stamp}"
 }
 
 lint_kit_usage() {

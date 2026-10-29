@@ -162,7 +162,6 @@ remove_fallback_paths() {
   remove_installed_path "$(prefix_path "${docdir}/README.md")"
   remove_installed_path "$(prefix_path "${docdir}/INSTALLATION.md")"
   remove_installed_path "$(prefix_path "${docdir}/NOTICE")"
-  remove_installed_path "$(prefix_path "${docdir}/CHECKLIST.md")"
   remove_installed_path "$(prefix_path "${docdir}/ARCHITECTURE_ECOSYSTEM.md")"
   remove_installed_path "$(prefix_path "${docdir}/ECOSYSTEM.md")"
   remove_installed_path "$(prefix_path "${docdir}/DEBUGGING.md")"

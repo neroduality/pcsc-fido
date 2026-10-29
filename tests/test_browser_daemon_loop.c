@@ -29,9 +29,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/prctl.h>
+#include <sys/resource.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 #include "pcsc_fido/mem_util.h"
+#include "pcsc_fido/pcsc_fido_io.h"
 #include "pcsc_fido/pcsc_log.h"
 
 enum {
@@ -88,12 +92,16 @@ int __wrap_nanosleep(const struct timespec* req PCSC_FIDO_MAYBE_UNUSED,
   return __real_nanosleep(&yield, rem);
 }
 
-time_t __wrap_time(time_t* t) {
-  g_fake_time++;
-  if (t != PCSC_FIDO_NULL) {
-    *t = g_fake_time;
+extern int __real_clock_gettime(clockid_t clock_id, struct timespec* ts);
+
+int __wrap_clock_gettime(clockid_t clock_id, struct timespec* ts) {
+  if (clock_id != CLOCK_MONOTONIC || ts == PCSC_FIDO_NULL) {
+    return __real_clock_gettime(clock_id, ts);
   }
-  return g_fake_time;
+  g_fake_time++;
+  ts->tv_sec = g_fake_time;
+  ts->tv_nsec = 0;
+  return 0;
 }
 
 extern int __real_open(const char* pathname, int flags, ...);
@@ -113,6 +121,16 @@ int __wrap_open(const char* pathname, int flags, ...) {
     return FAKE_UHID_FD;
   }
   return __real_open(pathname, flags);
+}
+
+/* FORTIFY's two-argument open() (always taken under Clang), which bypasses
+ * --wrap=open like __read_chk does --wrap=read; see tests/fortify_wrap.c.
+ * glibc aborts on O_CREAT here because the mode argument is missing. */
+int __wrap___open_2(const char* pathname, int flags) {
+  if ((flags & O_CREAT) != 0) {
+    abort();
+  }
+  return __wrap_open(pathname, flags);
 }
 
 ssize_t __wrap_read(int fd, void* buf, size_t count) {
@@ -324,13 +342,97 @@ static void reset_loop_test_state(void) {
 
 static char g_argv0[] = "pcsc-fido";
 
+#if !PCSC_FIDO_SANITIZE_THREAD
+enum {
+  HARDEN_CHILD_OK = 0,
+  HARDEN_CHILD_MAIN_FAILED = 1,
+  HARDEN_CHILD_STILL_DUMPABLE = 2,
+  HARDEN_CHILD_CORE_LIMIT_NOT_ZERO = 3,
+  HARDEN_CHILD_PRECONDITION_FAILED = 4,
+};
+
+/* Runs in a forked child: start from a known-dumpable state, run the daemon
+ * main, and report via exit status whether it hardened the process. */
+static int harden_child_body(char** argv) {
+  struct rlimit core_limit;
+  /* Explicitly dumpable first, so a pass proves main() flipped it rather than
+   * inheriting an earlier flip from the parent. */
+  if (prctl(PR_SET_DUMPABLE, 1, 0, 0, 0) != 0) {
+    return HARDEN_CHILD_PRECONDITION_FAILED;
+  }
+  if (getrlimit(RLIMIT_CORE, &core_limit) != 0) {
+    return HARDEN_CHILD_PRECONDITION_FAILED;
+  }
+  /* When the hard limit can be non-zero, raise the soft limit first so a
+   * later 0/0 proves main() lowered it. A hard limit already at 0 cannot be
+   * raised; dumpable 1->0 is the proof in that case. */
+  if (core_limit.rlim_max > 0u) {
+    core_limit.rlim_cur = 1;
+    if (setrlimit(RLIMIT_CORE, &core_limit) != 0) {
+      return HARDEN_CHILD_PRECONDITION_FAILED;
+    }
+  }
+  if (pcsc_fido_browser_daemon_main(1, argv) != 0) {
+    return HARDEN_CHILD_MAIN_FAILED;
+  }
+  if (prctl(PR_GET_DUMPABLE, 0, 0, 0, 0) != 0) {
+    return HARDEN_CHILD_STILL_DUMPABLE;
+  }
+  if (getrlimit(RLIMIT_CORE, &core_limit) != 0 || core_limit.rlim_cur != 0u ||
+      core_limit.rlim_max != 0u) {
+    return HARDEN_CHILD_CORE_LIMIT_NOT_ZERO;
+  }
+  return HARDEN_CHILD_OK;
+}
+#endif
+
 static void daemon_main_loop_handles_ping_and_close(void) {
   char* argv[] = {g_argv0, PCSC_FIDO_NULL};
   mock_pcsc_reset();
   mock_pcsc_set_readers("Loop Test Reader 00 00");
   reset_loop_test_state();
+#if PCSC_FIDO_SANITIZE_THREAD
+  /* TSan does not support fork() in a multithreaded runtime. Functional
+   * coverage stays in-process; dumpable/core-limit is checked in the
+   * non-TSan builds below. */
   expect_true(pcsc_fido_browser_daemon_main(1, argv) == 0,
               "daemon loop exits cleanly");
+#else
+  pid_t child;
+  int status = 0;
+  /* main() hardens the process before touching /dev/uhid: no core dumps and
+   * no /proc/<pid>/mem access, so scrubbed CTAP material cannot be captured
+   * from a crash dump. PR_SET_DUMPABLE=0 also blocks same-uid ptrace attach
+   * and the RLIMIT_CORE hard limit cannot be raised again unprivileged, so
+   * the assertion runs in a forked child: this process stays attachable and
+   * the check does not depend on test order. (The later tests below still
+   * call main() in-process and therefore harden this binary too; that only
+   * costs a core dump for a crashing later test.) */
+  pcsc_fido_io_fflush(stdout);
+  pcsc_fido_io_fflush(stderr);
+  child = fork();
+  expect_true(child >= 0, "fork for hardening check");
+  if (child == 0) {
+    _exit(harden_child_body(argv));
+  }
+  if (child > 0) {
+    expect_true(waitpid(child, &status, 0) == child, "waitpid hardening child");
+    expect_true(
+        WIFEXITED(status) && WEXITSTATUS(status) != HARDEN_CHILD_MAIN_FAILED,
+        "daemon loop exits cleanly");
+    expect_true(
+        WIFEXITED(status) && WEXITSTATUS(status) != HARDEN_CHILD_STILL_DUMPABLE,
+        "daemon main sets PR_SET_DUMPABLE=0");
+    expect_true(WIFEXITED(status) &&
+                    WEXITSTATUS(status) != HARDEN_CHILD_CORE_LIMIT_NOT_ZERO,
+                "daemon main sets RLIMIT_CORE to 0/0");
+    expect_true(WIFEXITED(status) &&
+                    WEXITSTATUS(status) != HARDEN_CHILD_PRECONDITION_FAILED,
+                "hardening child established dumpable precondition");
+    expect_true(WIFEXITED(status) && WEXITSTATUS(status) == HARDEN_CHILD_OK,
+                "hardening child exited OK");
+  }
+#endif
 }
 
 static void daemon_main_with_fd_entry(void) {
