@@ -22,6 +22,7 @@
 #include <time.h>
 #include "pcsc_fido/pcsc_fido_null.h"
 #include "pcsc_fido/pcsc_log.h"
+#include "linker_wrap.h"
 
 enum {
   FAKE_TIME_START = 1000,
@@ -44,8 +45,6 @@ time_t __wrap_time(time_t* t) {
   }
   return g_wall_time;
 }
-
-extern int __real_clock_gettime(clockid_t clock_id, struct timespec* ts);
 
 int __wrap_clock_gettime(clockid_t clock_id, struct timespec* ts) {
   if (clock_id != CLOCK_MONOTONIC || ts == PCSC_FIDO_NULL) {

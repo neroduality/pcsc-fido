@@ -97,7 +97,7 @@ pcsc_fido_run_coverage() {
     export DEBIAN_FRONTEND=noninteractive
     if command -v apt-get >/dev/null 2>&1; then
       apt-get update -qq
-      apt-get install -y --no-install-recommends lcov ca-certificates git util-linux
+      apt-get install -y --no-install-recommends lcov libjson-xs-perl ca-certificates git util-linux
     fi
     bash "${repo_root}/.github/scripts/ci-bootstrap-container.sh"
     bash "${repo_root}/.github/scripts/install-linux-deps.sh"
@@ -130,10 +130,12 @@ pcsc_fido_run_coverage() {
   # gcov writes .gcda as execute-only on some hosts; lcov cannot read them without u+r.
   find "${build_dir}" -name '*.gcda' -exec chmod u+r {} + 2>/dev/null || true
 
-  # lcov 2.x requires duplicated error names in --ignore-errors (e.g. unused,unused).
-  lcov --quiet --ignore-errors inconsistent,inconsistent \
+  # GCC can emit unexecuted blocks on non-branch lines with non-zero counts; zero them
+  # instead of tripping lcov's "inconsistent" check.
+  lcov --quiet --rc geninfo_unexecuted_blocks=1 \
     --capture --directory "${build_dir}" --output-file "${info_file}.raw"
-  lcov --quiet --ignore-errors inconsistent,inconsistent,unused,unused \
+  # lcov 2.x requires duplicated error names in --ignore-errors (e.g. unused,unused).
+  lcov --quiet --ignore-errors unused,unused \
     --remove "${info_file}.raw" \
     '*/tests/*' \
     --output-file "${info_file}"
@@ -159,8 +161,7 @@ run_coverage_container() {
   fi
 
   local platform_args=()
-  pcsc_fido_load_ci_platform_args
-  platform_args=("${PLATFORM_ARGS[@]}")
+  mapfile -t platform_args < <(pcsc_fido_ci_platform_docker_args)
 
   pcsc_fido_run_bind_mount_container \
     --restore build -- \

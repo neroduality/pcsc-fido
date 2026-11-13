@@ -19,6 +19,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "fuzz_target.h"
 
 int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   if (data == PCSC_FIDO_NULL) {

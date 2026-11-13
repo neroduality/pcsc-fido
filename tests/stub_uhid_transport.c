@@ -14,6 +14,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "stub_uhid_transport.h"
+
 #include "pcsc_fido/uhid_transport.h"
 
 #include <stdint.h>

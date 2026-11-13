@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <time.h>
 #include "pcsc_fido/pcsc_log.h"
+#include "linker_wrap.h"
 
 enum {
   WAIT_TIMEOUT_SEC = 5,

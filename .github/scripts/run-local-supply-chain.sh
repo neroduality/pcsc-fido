@@ -20,7 +20,7 @@
 #
 # Usage (from anywhere):
 #   bash /path/to/repo/.github/scripts/run-local-supply-chain.sh
-#   SYFT_IMAGE=anchore/syft:v1.55.0 GRYPE_IMAGE=anchore/grype:v0.121.0 bash .../run-local-supply-chain.sh
+#   SYFT_IMAGE=anchore/syft:v1.57.1 GRYPE_IMAGE=anchore/grype:v0.121.3 bash .../run-local-supply-chain.sh
 #   CONTAINER_ENGINE=podman bash .../run-local-supply-chain.sh
 #
 set -euo pipefail
@@ -35,8 +35,8 @@ check runs outside the container).
 Environment:
   CONTAINER_ENGINE            docker (default) or podman
   CI_PLATFORM                 Unset: linux/amd64 on x86_64, else linux/$host. Empty (CI_PLATFORM=): native.
-  SYFT_IMAGE                  Syft image (default: anchore/syft:v1.55.0)
-  GRYPE_IMAGE                 Grype image (default: anchore/grype:v0.121.0)
+  SYFT_IMAGE                  Syft image (default: anchore/syft:v1.57.1)
+  GRYPE_IMAGE                 Grype image (default: anchore/grype:v0.121.3)
   SUPPLY_CHAIN_TOOL_CACHE     Host dir for Syft/Grype caches (default: ~/.cache/nero-supply-chain-tools)
   SUPPLY_CHAIN_VERBOSE=1      Pass -v into Syft and Grype (more progress on stderr)
 
@@ -64,8 +64,8 @@ if ! command -v "${ENGINE}" >/dev/null 2>&1; then
   exit 1
 fi
 
-SYFT_IMAGE="${SYFT_IMAGE:-anchore/syft:v1.55.0@sha256:4cc92b64ca74ffca4c94d4c8fcc01f217731375300be14d0b6eeb2e82eaa110a}"
-GRYPE_IMAGE="${GRYPE_IMAGE:-anchore/grype:v0.121.0@sha256:621d56d1d68106b787022c81546f7e0a36202a25d1239f0c20195fab8c16f7ea}"
+SYFT_IMAGE="${SYFT_IMAGE:-anchore/syft:v1.57.1@sha256:03215d0e98b661d0ecbc8575dbc14d65be1743b5de5df6410aecb7e80f95b060}"
+GRYPE_IMAGE="${GRYPE_IMAGE:-anchore/grype:v0.121.3@sha256:13113eeceab017260370cf540e1d25442c59665fd07d1b09b66d63bb0c282887}"
 
 # Persist caches -- otherwise every `docker run --rm` rebuilds Grype's DB download (minutes, often silent).
 _chain_cache="${SUPPLY_CHAIN_TOOL_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/nero-supply-chain-tools}"
@@ -73,8 +73,7 @@ _syft_cache="${_chain_cache}/syft"
 _grype_cache="${_chain_cache}/grype"
 mkdir -p "${_syft_cache}" "${_grype_cache}"
 
-PLATFORM_ARGS=()
-pcsc_fido_load_ci_platform_args
+mapfile -t PLATFORM_ARGS < <(pcsc_fido_ci_platform_docker_args)
 
 syft_cfg="${REPO_ROOT}/.syft.yaml"
 syft_mount=()

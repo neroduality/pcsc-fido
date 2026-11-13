@@ -25,6 +25,8 @@ enum {
   // 1-based argument indices for the printf format attribute below.
   PCSC_FIDO_IO_PRINTF_FMT_ARG_INDEX = 2,
   PCSC_FIDO_IO_PRINTF_VARARGS_INDEX = 3,
+  // 0: the arguments arrive as a va_list, checked at the variadic caller.
+  PCSC_FIDO_IO_VPRINTF_VA_LIST_INDEX = 0,
 };
 
 /** Bounded project stream printf (sole intentional fprintf sink). */
@@ -32,7 +34,9 @@ void pcsc_fido_io_printf(FILE* stream, const char* fmt, ...)
     __attribute__((format(printf, PCSC_FIDO_IO_PRINTF_FMT_ARG_INDEX,
                           PCSC_FIDO_IO_PRINTF_VARARGS_INDEX)));
 
-void pcsc_fido_io_vprintf(FILE* stream, const char* fmt, va_list args);
+void pcsc_fido_io_vprintf(FILE* stream, const char* fmt, va_list args)
+    __attribute__((format(printf, PCSC_FIDO_IO_PRINTF_FMT_ARG_INDEX,
+                          PCSC_FIDO_IO_VPRINTF_VA_LIST_INDEX)));
 
 void pcsc_fido_io_fputs(FILE* stream, const char* s);
 void pcsc_fido_io_fputc(FILE* stream, int c);

@@ -78,7 +78,8 @@ static void verify_ready_tracks_card_presence(void) {
   mock_pcsc_set_status_state(SCARD_PRESENT | SCARD_SWALLOWED);
   expect_true(!pcsc_fido_session_verify_ready(err, sizeof(err)),
               "a swallowed card is not usable");
-  mock_pcsc_set_status_state(SCARD_PRESENT | SCARD_POWERED | SCARD_SPECIFIC);
+  mock_pcsc_set_status_state((DWORD)SCARD_PRESENT | SCARD_POWERED |
+                             SCARD_SPECIFIC);
   expect_true(pcsc_fido_session_verify_ready(err, sizeof(err)),
               "a powered card with a specific protocol is usable");
   mock_pcsc_set_status_state((DWORD)STATUS_EVENT_COUNT_ONE | SCARD_PRESENT |

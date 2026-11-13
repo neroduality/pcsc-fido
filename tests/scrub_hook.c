@@ -22,6 +22,7 @@
 
 #include "pcsc_fido/pcsc_fido_null.h"
 #include "pcsc_fido/pcsc_log.h"
+#include "linker_wrap.h"
 
 enum {
   /* Distinct wipe lengths per scenario. Counting per length rather than
@@ -40,8 +41,6 @@ static bool g_all_zero = true;
 static size_t g_lens[SCRUB_HOOK_LEN_SLOTS];
 static unsigned g_len_calls[SCRUB_HOOK_LEN_SLOTS];
 static unsigned g_len_slots_used;
-
-extern void __real_pcsc_fido_secure_clear(void* ptr, size_t len);
 
 static void count_len_locked(size_t len) {
   for (unsigned i = 0u; i < g_len_slots_used; i++) {

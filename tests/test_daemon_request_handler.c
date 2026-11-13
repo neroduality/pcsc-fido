@@ -44,15 +44,15 @@
 #include "pcsc_fido/pcsc_log.h"
 #include "pcsc_fido/uhid_transport.h"
 #include "scrub_hook.h"
+#include "linker_wrap.h"
 
 #define U32_ALL_ONES 0xFFFFFFFFu
 
-enum {
+enum : unsigned {
   FAKE_TIME_START = 1000000,
   SOCKET_PAIR_FD_COUNT = 2,
   INIT_CMD_NFC = 0x4E464301,
   TEST_INVALID_HID_CMD = 0xEE,
-  CANCEL_INJECT_SPIN_LIMIT = 50000,
   UINT32_BYTE3_SHIFT = 24,
   UINT32_BYTE2_SHIFT = 16,
   UINT32_BYTE1_SHIFT = 8,
@@ -60,7 +60,6 @@ enum {
   HID_CID_BYTE2_OFFSET = 2,
   HID_CID_BYTE3_OFFSET = 3,
   HID_CMD_OFFSET = 4,
-  HID_INIT_PACKET_FLAG = 0x80,
   /* A kept session sends just the command; a reset one re-SELECTs first. */
   KEPT_SESSION_TRANSMITS = 1,
   RESET_SESSION_TRANSMITS = 2,
@@ -73,13 +72,18 @@ enum {
   /* Within the bridge's response cap, one byte over what CTAPHID can frame. */
   UNFRAMEABLE_RESPONSE_LEN = PCSC_FIDO_CTAPHID_MAX_FRAMED_PAYLOAD + 1,
   SW_OK_HIGH = 0x90,
+  /* Non-keepalive replies the host peer holds; more fails the test. */
+  PEER_EVENT_CAP = 256,
+  /* Real-time bound on every wait for the handler's output. */
+  PEER_WAIT_TIMEOUT_SEC = 30,
+  /* Written on the daemon fd to mark "everything before this was read". No
+   * real uhid_event_type has this value. */
+  PEER_SYNC_EVENT_TYPE = U32_ALL_ONES,
 };
 
-static time_t g_fake_time = FAKE_TIME_START;
+/* Advanced by the main thread and the exchange worker alike. */
+static _Atomic time_t g_fake_time = FAKE_TIME_START;
 static atomic_bool g_fail_pthread_create;
-
-extern int __real_pthread_create(pthread_t* thread, const pthread_attr_t* attr,
-                                 void* (*start_routine)(void*), void* arg);
 
 int __wrap_pthread_create(pthread_t* thread, const pthread_attr_t* attr,
                           void* (*start_routine)(void*), void* arg) {
@@ -95,14 +99,11 @@ int __wrap_nanosleep(const struct timespec* req PCSC_FIDO_MAYBE_UNUSED,
   return 0;
 }
 
-extern int __real_clock_gettime(clockid_t clock_id, struct timespec* ts);
-
 int __wrap_clock_gettime(clockid_t clock_id, struct timespec* ts) {
   if (clock_id != CLOCK_MONOTONIC || ts == PCSC_FIDO_NULL) {
     return __real_clock_gettime(clock_id, ts);
   }
-  g_fake_time++;
-  ts->tv_sec = g_fake_time;
+  ts->tv_sec = atomic_fetch_add(&g_fake_time, 1) + 1;
   ts->tv_nsec = 0;
   return 0;
 }
@@ -127,46 +128,236 @@ static void bind_test_channel(pcsc_fido_daemon_request_context_t* ctx,
   ctx->channels = &g_channels;
 }
 
-static int uhid_pair(int sv[SOCKET_PAIR_FD_COUNT]) {
-  return socketpair(AF_UNIX, SOCK_STREAM, 0, sv);
-}
-
-static bool read_uhid_event(int fd, struct uhid_event* ev) {
-  ssize_t got = read(fd, ev, sizeof(*ev));
-  return got == (ssize_t)sizeof(*ev);
-}
+/*
+ * Host side of the UHID socketpair. A thread reads everything the handler
+ * writes for the whole test, so the handler's blocking writes can never fill
+ * the socket buffer: with nanosleep stubbed, an exchange sends keepalives in a
+ * tight loop until its worker finishes, which on a slow or CPU-starved host is
+ * more than the buffer holds. Replies are queued; keepalives are only counted.
+ * Every wait is bounded, so a missing reply fails the test instead of hanging.
+ */
+typedef struct {
+  uint32_t type;
+  uint8_t data[PCSC_FIDO_HID_PACKET_SIZE];
+} peer_event_t;
 
 typedef struct {
-  int fd;
-} socket_drain_arg_t;
+  int daemon_fd;
+  int host_fd;
+  pthread_t thread;
+  pthread_mutex_t mutex;
+  pthread_cond_t cond;
+  peer_event_t events[PEER_EVENT_CAP];
+  unsigned head;
+  unsigned count;
+  unsigned keepalives;
+  unsigned syncs_seen;
+  bool overflowed;
+  bool eof;
+} uhid_peer_t;
 
-static void* drain_socket_main(void* arg) {
-  const socket_drain_arg_t* ctx = (const socket_drain_arg_t*)arg;
-  const int fd = ctx->fd;
-  uint8_t buf[TEST_CAP_4096];
-  ssize_t got;
-  while ((got = read(fd, buf, sizeof(buf))) > 0) {
-    (void)got;
+static uhid_peer_t g_peer;
+
+static bool read_full_event(int fd, struct uhid_event* ev) {
+  uint8_t* bytes = (uint8_t*)ev;
+  size_t got = 0u;
+  while (got < sizeof(*ev)) {
+    const ssize_t n = read(fd, bytes + got, sizeof(*ev) - got);
+    if (n < 0 && errno == EINTR) {
+      continue;
+    }
+    if (n <= 0) {
+      return false;
+    }
+    got += (size_t)n;
   }
+  return true;
+}
+
+static bool is_keepalive(const struct uhid_event* ev) {
+  return ev->type == UHID_INPUT2 &&
+         ev->u.input2.data[PCSC_FIDO_HID_OFF_CMD] ==
+             (uint8_t)(PCSC_FIDO_HID_TYPE_INIT | PCSC_FIDO_HID_CMD_KEEPALIVE);
+}
+
+static void peer_record_locked(uhid_peer_t* peer, const struct uhid_event* ev) {
+  peer_event_t* slot;
+  if (ev->type == PEER_SYNC_EVENT_TYPE) {
+    peer->syncs_seen++;
+    return;
+  }
+  if (is_keepalive(ev)) {
+    peer->keepalives++;
+    return;
+  }
+  if (peer->count == PEER_EVENT_CAP) {
+    peer->overflowed = true;
+    return;
+  }
+  slot = &peer->events[(peer->head + peer->count) % PEER_EVENT_CAP];
+  slot->type = ev->type;
+  (void)pcsc_fido_copy_bytes(slot->data, sizeof(slot->data), 0u,
+                             ev->u.input2.data, sizeof(slot->data));
+  peer->count++;
+}
+
+static void* peer_main(void* arg) {
+  uhid_peer_t* peer = (uhid_peer_t*)arg;
+  struct uhid_event ev;
+  while (read_full_event(peer->host_fd, &ev)) {
+    pthread_mutex_lock(&peer->mutex);
+    peer_record_locked(peer, &ev);
+    pthread_cond_broadcast(&peer->cond);
+    pthread_mutex_unlock(&peer->mutex);
+  }
+  pthread_mutex_lock(&peer->mutex);
+  peer->eof = true;
+  pthread_cond_broadcast(&peer->cond);
+  pthread_mutex_unlock(&peer->mutex);
   return PCSC_FIDO_NULL;
 }
 
-static void start_socket_drain(int fd, pthread_t* thread,
-                               socket_drain_arg_t* arg) {
-  arg->fd = fd;
-  expect_true(
-      pthread_create(thread, PCSC_FIDO_NULL, drain_socket_main, arg) == 0,
-      "socket drain thread starts");
+static bool peer_open(void) {
+  int sv[SOCKET_PAIR_FD_COUNT];
+  pthread_condattr_t cond_attr;
+  pcsc_fido_zero_bytes(&g_peer, sizeof(g_peer));
+  if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
+    return false;
+  }
+  g_peer.daemon_fd = sv[0];
+  g_peer.host_fd = sv[1];
+  (void)pthread_mutex_init(&g_peer.mutex, PCSC_FIDO_NULL);
+  (void)pthread_condattr_init(&cond_attr);
+  (void)pthread_condattr_setclock(&cond_attr, CLOCK_MONOTONIC);
+  (void)pthread_cond_init(&g_peer.cond, &cond_attr);
+  (void)pthread_condattr_destroy(&cond_attr);
+  if (pthread_create(&g_peer.thread, PCSC_FIDO_NULL, peer_main, &g_peer) != 0) {
+    (void)close(g_peer.daemon_fd);
+    (void)close(g_peer.host_fd);
+    return false;
+  }
+  return true;
 }
 
-static void stop_socket_drain(int producer_fd, int drain_fd, pthread_t thread) {
-  (void)close(producer_fd);
-  (void)pthread_join(thread, PCSC_FIDO_NULL);
-  (void)close(drain_fd);
+/* Ends the peer at EOF; the handler must not be running. */
+static void peer_close(void) {
+  (void)shutdown(g_peer.daemon_fd, SHUT_WR);
+  (void)pthread_join(g_peer.thread, PCSC_FIDO_NULL);
+  expect_true(!g_peer.overflowed, "host peer kept every reply");
+  (void)close(g_peer.daemon_fd);
+  (void)close(g_peer.host_fd);
+  (void)pthread_cond_destroy(&g_peer.cond);
+  (void)pthread_mutex_destroy(&g_peer.mutex);
+}
+
+static bool peer_deadline(struct timespec* deadline) {
+  if (__real_clock_gettime(CLOCK_MONOTONIC, deadline) != 0) {
+    return false;
+  }
+  deadline->tv_sec += PEER_WAIT_TIMEOUT_SEC;
+  return true;
+}
+
+static bool peer_pop_locked(peer_event_t* out) {
+  if (g_peer.count == 0u) {
+    return false;
+  }
+  *out = g_peer.events[g_peer.head];
+  g_peer.head = (g_peer.head + 1u) % PEER_EVENT_CAP;
+  g_peer.count--;
+  return true;
+}
+
+/* Next reply the handler sent, waiting a bounded time for it to arrive. */
+static bool peer_next(peer_event_t* out) {
+  struct timespec deadline;
+  int rc = 0;
+  bool got;
+  if (!peer_deadline(&deadline)) {
+    return false;
+  }
+  pthread_mutex_lock(&g_peer.mutex);
+  while (g_peer.count == 0u && !g_peer.eof && rc == 0) {
+    rc = pthread_cond_timedwait(&g_peer.cond, &g_peer.mutex, &deadline);
+  }
+  got = peer_pop_locked(out);
+  pthread_mutex_unlock(&g_peer.mutex);
+  return got;
+}
+
+/* Returns once the peer has read everything the handler wrote so far. */
+static bool peer_sync(void) {
+  struct uhid_event marker;
+  struct timespec deadline;
+  unsigned target;
+  int rc = 0;
+  bool synced;
+  if (!peer_deadline(&deadline)) {
+    return false;
+  }
+  pthread_mutex_lock(&g_peer.mutex);
+  target = g_peer.syncs_seen + 1u;
+  pthread_mutex_unlock(&g_peer.mutex);
+  pcsc_fido_zero_bytes(&marker, sizeof(marker));
+  marker.type = PEER_SYNC_EVENT_TYPE;
+  if (write(g_peer.daemon_fd, &marker, sizeof(marker)) !=
+      (ssize_t)sizeof(marker)) {
+    return false;
+  }
+  pthread_mutex_lock(&g_peer.mutex);
+  while (g_peer.syncs_seen < target && !g_peer.eof && rc == 0) {
+    rc = pthread_cond_timedwait(&g_peer.cond, &g_peer.mutex, &deadline);
+  }
+  synced = g_peer.syncs_seen >= target;
+  pthread_mutex_unlock(&g_peer.mutex);
+  return synced;
+}
+
+/* Next reply already received; call after peer_sync. Never waits. */
+static bool peer_pop(peer_event_t* out) {
+  bool got;
+  pthread_mutex_lock(&g_peer.mutex);
+  got = peer_pop_locked(out);
+  pthread_mutex_unlock(&g_peer.mutex);
+  return got;
+}
+
+/* True if the handler sent no reply since the last one consumed. */
+static bool peer_quiet(void) {
+  bool quiet;
+  if (!peer_sync()) {
+    return false;
+  }
+  pthread_mutex_lock(&g_peer.mutex);
+  quiet = g_peer.count == 0u;
+  pthread_mutex_unlock(&g_peer.mutex);
+  return quiet;
+}
+
+static unsigned peer_keepalives(void) {
+  unsigned keepalives;
+  pthread_mutex_lock(&g_peer.mutex);
+  keepalives = g_peer.keepalives;
+  pthread_mutex_unlock(&g_peer.mutex);
+  return keepalives;
+}
+
+static void peer_discard(void) {
+  expect_true(peer_sync(), "host peer caught up before discarding");
+  pthread_mutex_lock(&g_peer.mutex);
+  g_peer.head = 0u;
+  g_peer.count = 0u;
+  pthread_mutex_unlock(&g_peer.mutex);
+}
+
+/* Queues a host -> device event for the handler to read mid-exchange. */
+static void peer_inject(const struct uhid_event* ev, const char* what) {
+  expect_true(write(g_peer.host_fd, ev, sizeof(*ev)) == (ssize_t)sizeof(*ev),
+              what);
 }
 
 static void handler_setup(void) {
-  g_fake_time = FAKE_TIME_START;
+  atomic_store(&g_fake_time, FAKE_TIME_START);
   atomic_store_explicit(&g_fail_pthread_create, false, memory_order_relaxed);
   mock_pcsc_reset();
   pcsc_fido_bridge_reset();
@@ -174,150 +365,129 @@ static void handler_setup(void) {
 }
 
 static void init_valid(void) {
-  int sv[SOCKET_PAIR_FD_COUNT];
   uint32_t cid = INIT_CMD_NFC;
   pcsc_fido_daemon_request_context_t ctx;
   const uint8_t nonce[8] = {1, 2, 3, 4, 5, 6, 7, 8};
   handler_setup();
-  expect_true(uhid_pair(sv) == 0, "socketpair init");
-  ctx.fd = sv[0];
+  expect_true(peer_open(), "socketpair init");
+  ctx.fd = g_peer.daemon_fd;
   bind_test_channel(&ctx, cid);
   scrub_hook_reset();
   pcsc_fido_daemon_handle_hid_request(
       &ctx, U32_ALL_ONES, PCSC_FIDO_HID_CMD_INIT, nonce, sizeof(nonce));
   {
-    struct uhid_event ev;
-    expect_true(read_uhid_event(sv[1], &ev), "init response event");
+    peer_event_t ev;
+    expect_true(peer_next(&ev), "init response event");
     expect_true(ev.type == UHID_INPUT2, "init UHID_INPUT2");
   }
   expect_true(scrub_hook_calls_with_len(PCSC_FIDO_HID_INIT_RESP_LEN) == 1u,
               "INIT response staging buffer scrubbed");
   expect_true(scrub_hook_all_zero(), "INIT scrubs left regions zeroed");
-  close(sv[0]);
-  close(sv[1]);
+  peer_close();
 }
 
 static void init_invalid_length(void) {
-  int sv[SOCKET_PAIR_FD_COUNT];
   uint32_t cid = INIT_CMD_NFC;
   pcsc_fido_daemon_request_context_t ctx;
   const uint8_t short_nonce[4] = {1, 2, 3, 4};
   handler_setup();
-  expect_true(uhid_pair(sv) == 0, "socketpair init bad len");
-  ctx.fd = sv[0];
+  expect_true(peer_open(), "socketpair init bad len");
+  ctx.fd = g_peer.daemon_fd;
   bind_test_channel(&ctx, cid);
   pcsc_fido_daemon_handle_hid_request(&ctx, U32_ALL_ONES,
                                       PCSC_FIDO_HID_CMD_INIT, short_nonce,
                                       sizeof(short_nonce));
-  close(sv[0]);
-  close(sv[1]);
+  peer_close();
 }
 
 static void wrong_cid(void) {
-  int sv[SOCKET_PAIR_FD_COUNT];
   uint32_t cid = INIT_CMD_NFC;
   pcsc_fido_daemon_request_context_t ctx;
   const uint8_t ping[] = {0xAAu};
   handler_setup();
-  expect_true(uhid_pair(sv) == 0, "socketpair wrong cid");
-  ctx.fd = sv[0];
+  expect_true(peer_open(), "socketpair wrong cid");
+  ctx.fd = g_peer.daemon_fd;
   bind_test_channel(&ctx, cid);
   pcsc_fido_daemon_handle_hid_request(&ctx, TEST_CID, PCSC_FIDO_HID_CMD_PING,
                                       ping, sizeof(ping));
-  close(sv[0]);
-  close(sv[1]);
+  peer_close();
 }
 
 static void ping_echo(void) {
-  int sv[SOCKET_PAIR_FD_COUNT];
   uint32_t cid = INIT_CMD_NFC;
   pcsc_fido_daemon_request_context_t ctx;
   const uint8_t ping[] = {0xAAu, 0xBBu};
   handler_setup();
-  expect_true(uhid_pair(sv) == 0, "socketpair ping");
-  ctx.fd = sv[0];
+  expect_true(peer_open(), "socketpair ping");
+  ctx.fd = g_peer.daemon_fd;
   bind_test_channel(&ctx, cid);
   pcsc_fido_daemon_handle_hid_request(&ctx, cid, PCSC_FIDO_HID_CMD_PING, ping,
                                       sizeof(ping));
   {
-    struct uhid_event ev;
-    expect_true(read_uhid_event(sv[1], &ev), "ping response");
+    peer_event_t ev;
+    expect_true(peer_next(&ev), "ping response");
     expect_true(ev.type == UHID_INPUT2, "ping UHID_INPUT2");
   }
-  close(sv[0]);
-  close(sv[1]);
+  peer_close();
 }
 
 static void cancel_resets_bridge(void) {
-  int sv[SOCKET_PAIR_FD_COUNT];
-  struct uhid_event ev;
   uint32_t cid = INIT_CMD_NFC;
   pcsc_fido_daemon_request_context_t ctx;
   handler_setup();
-  expect_true(uhid_pair(sv) == 0, "socketpair cancel");
-  ctx.fd = sv[0];
+  expect_true(peer_open(), "socketpair cancel");
+  ctx.fd = g_peer.daemon_fd;
   bind_test_channel(&ctx, cid);
   pcsc_fido_daemon_handle_hid_request(&ctx, cid, PCSC_FIDO_HID_CMD_CANCEL,
                                       PCSC_FIDO_NULL, 0u);
-  (void)shutdown(sv[0], SHUT_WR);
-  expect_true(!read_uhid_event(sv[1], &ev),
-              "standalone CANCEL has no direct response");
-  close(sv[0]);
-  close(sv[1]);
+  expect_true(peer_quiet(), "standalone CANCEL has no direct response");
+  peer_close();
 }
 
 static void wink_and_lock(void) {
-  int sv[SOCKET_PAIR_FD_COUNT];
   uint32_t cid = INIT_CMD_NFC;
   pcsc_fido_daemon_request_context_t ctx;
   handler_setup();
-  expect_true(uhid_pair(sv) == 0, "socketpair wink");
-  ctx.fd = sv[0];
+  expect_true(peer_open(), "socketpair wink");
+  ctx.fd = g_peer.daemon_fd;
   bind_test_channel(&ctx, cid);
   pcsc_fido_daemon_handle_hid_request(&ctx, cid, PCSC_FIDO_HID_CMD_WINK,
                                       PCSC_FIDO_NULL, 0u);
   {
-    struct uhid_event ev;
-    expect_true(
-        read_uhid_event(sv[1], &ev) &&
-            ev.u.input2.data[PCSC_FIDO_HID_OFF_CMD] ==
-                (uint8_t)(PCSC_FIDO_HID_TYPE_INIT | PCSC_FIDO_HID_CMD_WINK),
-        "WINK answered with an empty WINK response");
+    peer_event_t ev;
+    expect_true(peer_next(&ev) && ev.data[PCSC_FIDO_HID_OFF_CMD] ==
+                                      (uint8_t)(PCSC_FIDO_HID_TYPE_INIT |
+                                                PCSC_FIDO_HID_CMD_WINK),
+                "WINK answered with an empty WINK response");
   }
   pcsc_fido_daemon_handle_hid_request(&ctx, cid, PCSC_FIDO_HID_CMD_LOCK,
                                       PCSC_FIDO_NULL, 0u);
   {
-    struct uhid_event ev;
+    peer_event_t ev;
     expect_true(
-        read_uhid_event(sv[1], &ev) &&
-            ev.u.input2.data[PCSC_FIDO_HID_OFF_CMD] ==
+        peer_next(&ev) &&
+            ev.data[PCSC_FIDO_HID_OFF_CMD] ==
                 (uint8_t)(PCSC_FIDO_HID_TYPE_INIT | PCSC_FIDO_HID_CMD_ERROR) &&
-            ev.u.input2.data[PCSC_FIDO_HID_OFF_INIT_DATA] ==
+            ev.data[PCSC_FIDO_HID_OFF_INIT_DATA] ==
                 PCSC_FIDO_DAEMON_ERR_INVALID_CMD,
         "unimplemented LOCK is rejected with ERR_INVALID_CMD");
   }
-  close(sv[0]);
-  close(sv[1]);
+  peer_close();
 }
 
 static void invalid_command(void) {
-  int sv[SOCKET_PAIR_FD_COUNT];
   uint32_t cid = INIT_CMD_NFC;
   pcsc_fido_daemon_request_context_t ctx;
   handler_setup();
-  expect_true(uhid_pair(sv) == 0, "socketpair invalid cmd");
-  ctx.fd = sv[0];
+  expect_true(peer_open(), "socketpair invalid cmd");
+  ctx.fd = g_peer.daemon_fd;
   bind_test_channel(&ctx, cid);
   pcsc_fido_daemon_handle_hid_request(&ctx, cid, TEST_INVALID_HID_CMD,
                                       PCSC_FIDO_NULL, 0u);
-  close(sv[0]);
-  close(sv[1]);
+  peer_close();
 }
 
 static void cbor_getinfo(void) {
-  int sv[SOCKET_PAIR_FD_COUNT];
-  pthread_t drain_thread;
-  socket_drain_arg_t drain_arg;
   uint32_t cid = INIT_CMD_NFC;
   pcsc_fido_daemon_request_context_t ctx;
   const uint8_t get_info[] = {0x04u};
@@ -325,14 +495,13 @@ static void cbor_getinfo(void) {
   handler_setup();
   mock_pcsc_set_readers("Handler Test Reader 00 00");
   mock_pcsc_set_transmit_response(mock_resp, sizeof(mock_resp));
-  expect_true(uhid_pair(sv) == 0, "socketpair cbor");
-  start_socket_drain(sv[1], &drain_thread, &drain_arg);
-  ctx.fd = sv[0];
+  expect_true(peer_open(), "socketpair cbor");
+  ctx.fd = g_peer.daemon_fd;
   bind_test_channel(&ctx, cid);
   scrub_hook_reset();
   pcsc_fido_daemon_handle_hid_request(&ctx, cid, PCSC_FIDO_HID_CMD_CBOR,
                                       get_info, sizeof(get_info));
-  stop_socket_drain(sv[0], sv[1], drain_thread);
+  peer_close();
   /* The handler's assembled-response buffer is exactly PENDING_MAX bytes; the
    * exchange job scrub is larger and the HID packet / UHID event smaller. */
   expect_true(scrub_hook_calls_with_len(PCSC_FIDO_DAEMON_PENDING_MAX) == 1u,
@@ -341,22 +510,18 @@ static void cbor_getinfo(void) {
 }
 
 static void cbor_bridge_failure(void) {
-  int sv[SOCKET_PAIR_FD_COUNT];
-  pthread_t drain_thread;
-  socket_drain_arg_t drain_arg;
   uint32_t cid = INIT_CMD_NFC;
   pcsc_fido_daemon_request_context_t ctx;
   const uint8_t get_info[] = {0x04u};
   handler_setup();
   mock_pcsc_set_list_probe_fail(SCARD_F_INTERNAL_ERROR);
-  expect_true(uhid_pair(sv) == 0, "socketpair cbor fail");
-  start_socket_drain(sv[1], &drain_thread, &drain_arg);
-  ctx.fd = sv[0];
+  expect_true(peer_open(), "socketpair cbor fail");
+  ctx.fd = g_peer.daemon_fd;
   bind_test_channel(&ctx, cid);
   scrub_hook_reset();
   pcsc_fido_daemon_handle_hid_request(&ctx, cid, PCSC_FIDO_HID_CMD_CBOR,
                                       get_info, sizeof(get_info));
-  stop_socket_drain(sv[0], sv[1], drain_thread);
+  peer_close();
   expect_true(scrub_hook_calls_with_len(PCSC_FIDO_DAEMON_PENDING_MAX) == 1u,
               "handler response buffer scrubbed on bridge failure");
   expect_true(
@@ -367,9 +532,6 @@ static void cbor_bridge_failure(void) {
 }
 
 static void terminal_make_credential_resets_session(void) {
-  int sv[SOCKET_PAIR_FD_COUNT];
-  pthread_t drain_thread;
-  socket_drain_arg_t drain_arg;
   uint32_t cid = INIT_CMD_NFC;
   pcsc_fido_daemon_request_context_t ctx;
   const uint8_t make_cred[] = {0x01u, 0xA0u};
@@ -377,44 +539,26 @@ static void terminal_make_credential_resets_session(void) {
   handler_setup();
   mock_pcsc_set_readers("Handler Test Reader 00 00");
   mock_pcsc_set_transmit_response(mock_resp, sizeof(mock_resp));
-  expect_true(uhid_pair(sv) == 0, "socketpair makeCred");
-  start_socket_drain(sv[1], &drain_thread, &drain_arg);
-  ctx.fd = sv[0];
+  expect_true(peer_open(), "socketpair makeCred");
+  ctx.fd = g_peer.daemon_fd;
   bind_test_channel(&ctx, cid);
   pcsc_fido_daemon_handle_hid_request(&ctx, cid, PCSC_FIDO_HID_CMD_CBOR,
                                       make_cred, sizeof(make_cred));
-  stop_socket_drain(sv[0], sv[1], drain_thread);
+  peer_close();
 }
 
-typedef struct {
-  int inject_fd;
-  struct uhid_event ev;
-} uhid_inject_args_t;
-
-static void* inject_uhid_event_main(void* arg) {
-  const uhid_inject_args_t* args = (const uhid_inject_args_t*)arg;
-  for (unsigned spin = 0u; spin < CANCEL_INJECT_SPIN_LIMIT; spin++) {
-    (void)spin;
-  }
-  ssize_t inject_wr = write(args->inject_fd, &args->ev, sizeof(args->ev));
-  (void)inject_wr;
-  return PCSC_FIDO_NULL;
-}
-
+/* The CANCEL is queued before the request: the exchange only reads the UHID
+ * fd while it is in flight, so it sees the CANCEL on its first drain whatever
+ * the scheduling, and the reader wait (no reader ever appears) is aborted. */
 static void cbor_keepalive_cancel_response(void) {
-  int sv[SOCKET_PAIR_FD_COUNT];
-  pthread_t drain_thread;
-  socket_drain_arg_t drain_arg;
-  pthread_t inject_thread;
-  uhid_inject_args_t inject_args;
+  struct uhid_event cancel;
   uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE];
   uint32_t cid = INIT_CMD_NFC;
   pcsc_fido_daemon_request_context_t ctx;
   const uint8_t get_info[] = {0x04u};
   handler_setup();
   mock_pcsc_set_list_probe_always_no_readers(true);
-  expect_true(uhid_pair(sv) == 0, "socketpair keepalive cancel");
-  start_socket_drain(sv[1], &drain_thread, &drain_arg);
+  expect_true(peer_open(), "socketpair keepalive cancel");
   pcsc_fido_zero_bytes(packet, sizeof(packet));
   packet[0] = (uint8_t)((cid >> UINT32_BYTE3_SHIFT) & BYTE_MASK);
   packet[1] = (uint8_t)((cid >> UINT32_BYTE2_SHIFT) & BYTE_MASK);
@@ -422,93 +566,107 @@ static void cbor_keepalive_cancel_response(void) {
       (uint8_t)((cid >> UINT32_BYTE1_SHIFT) & BYTE_MASK);
   packet[HID_CID_BYTE3_OFFSET] = (uint8_t)(cid & BYTE_MASK);
   packet[HID_CMD_OFFSET] =
-      (uint8_t)(HID_INIT_PACKET_FLAG | PCSC_FIDO_HID_CMD_CANCEL);
-  pcsc_fido_zero_bytes(&inject_args.ev, sizeof(inject_args.ev));
-  inject_args.ev.type = UHID_OUTPUT;
-  inject_args.ev.u.output.size = PCSC_FIDO_HID_PACKET_SIZE;
-  (void)pcsc_fido_copy_bytes(inject_args.ev.u.output.data, sizeof(packet), 0u,
-                             packet, sizeof(packet));
-  inject_args.inject_fd = sv[1];
-  expect_true(pthread_create(&inject_thread, PCSC_FIDO_NULL,
-                             inject_uhid_event_main, &inject_args) == 0,
-              "cancel inject thread starts");
-  ctx.fd = sv[0];
+      (uint8_t)(PCSC_FIDO_HID_TYPE_INIT | PCSC_FIDO_HID_CMD_CANCEL);
+  pcsc_fido_zero_bytes(&cancel, sizeof(cancel));
+  cancel.type = UHID_OUTPUT;
+  cancel.u.output.size = PCSC_FIDO_HID_PACKET_SIZE;
+  (void)pcsc_fido_copy_bytes(cancel.u.output.data, sizeof(packet), 0u, packet,
+                             sizeof(packet));
+  peer_inject(&cancel, "queue CANCEL");
+  ctx.fd = g_peer.daemon_fd;
   bind_test_channel(&ctx, cid);
   pcsc_fido_daemon_handle_hid_request(&ctx, cid, PCSC_FIDO_HID_CMD_CBOR,
                                       get_info, sizeof(get_info));
-  (void)pthread_join(inject_thread, PCSC_FIDO_NULL);
-  stop_socket_drain(sv[0], sv[1], drain_thread);
+  {
+    peer_event_t ev;
+    expect_true(
+        peer_next(&ev) &&
+            ev.data[PCSC_FIDO_HID_OFF_CMD] ==
+                (uint8_t)(PCSC_FIDO_HID_TYPE_INIT | PCSC_FIDO_HID_CMD_CBOR) &&
+            ev.data[PCSC_FIDO_HID_OFF_INIT_DATA] ==
+                PCSC_FIDO_DAEMON_CTAP2_ERR_KEEPALIVE_CANCEL,
+        "a cancelled CBOR request is answered CTAP2_ERR_KEEPALIVE_CANCEL");
+  }
+  peer_close();
+}
+
+/* Channel ID an INIT reply assigns (it follows the echoed nonce). */
+static uint32_t init_reply_assigned_cid(const peer_event_t* ev) {
+  uint8_t cid_packet[PCSC_FIDO_HID_PACKET_SIZE];
+  pcsc_fido_zero_bytes(cid_packet, sizeof(cid_packet));
+  (void)pcsc_fido_copy_bytes(
+      cid_packet, sizeof(cid_packet), 0u,
+      ev->data + PCSC_FIDO_HID_OFF_INIT_DATA + PCSC_FIDO_HID_INIT_NONCE_LEN,
+      PCSC_FIDO_HID_CID_LEN);
+  return pcsc_fido_daemon_hid_packet_cid(cid_packet);
 }
 
 /* Sends INIT on `request_cid` and returns the channel ID from the reply, or 0
  * if the reply was an error. */
 static uint32_t send_init(const pcsc_fido_daemon_request_context_t* ctx,
-                          int peer_fd, uint32_t request_cid) {
+                          uint32_t request_cid) {
   const uint8_t nonce[PCSC_FIDO_HID_INIT_NONCE_LEN] = {1, 2, 3, 4, 5, 6, 7, 8};
-  struct uhid_event ev;
+  peer_event_t ev;
   pcsc_fido_daemon_handle_hid_request(ctx, request_cid, PCSC_FIDO_HID_CMD_INIT,
                                       nonce, sizeof(nonce));
-  if (!read_uhid_event(peer_fd, &ev) ||
-      ev.u.input2.data[PCSC_FIDO_HID_OFF_CMD] !=
+  if (!peer_next(&ev) ||
+      ev.data[PCSC_FIDO_HID_OFF_CMD] !=
           (uint8_t)(PCSC_FIDO_HID_TYPE_INIT | PCSC_FIDO_HID_CMD_INIT)) {
     return 0u;
   }
-  expect_true(pcsc_fido_daemon_hid_packet_cid(ev.u.input2.data) == request_cid,
+  expect_true(pcsc_fido_daemon_hid_packet_cid(ev.data) == request_cid,
               "INIT reply is sent on the requesting channel");
-  return pcsc_fido_daemon_hid_packet_cid(ev.u.input2.data +
-                                         PCSC_FIDO_HID_OFF_INIT_DATA +
-                                         PCSC_FIDO_HID_INIT_NONCE_LEN);
+  return init_reply_assigned_cid(&ev);
 }
 
-static bool reply_is_error(int peer_fd, uint32_t cid, uint8_t code) {
-  struct uhid_event ev;
-  return read_uhid_event(peer_fd, &ev) &&
-         pcsc_fido_daemon_hid_packet_cid(ev.u.input2.data) == cid &&
-         ev.u.input2.data[PCSC_FIDO_HID_OFF_CMD] ==
+static bool is_error_reply(const peer_event_t* ev, uint32_t cid, uint8_t code) {
+  return pcsc_fido_daemon_hid_packet_cid(ev->data) == cid &&
+         ev->data[PCSC_FIDO_HID_OFF_CMD] ==
              (uint8_t)(PCSC_FIDO_HID_TYPE_INIT | PCSC_FIDO_HID_CMD_ERROR) &&
-         ev.u.input2.data[PCSC_FIDO_HID_OFF_INIT_DATA] == code;
+         ev->data[PCSC_FIDO_HID_OFF_INIT_DATA] == code;
+}
+
+static bool reply_is_error(uint32_t cid, uint8_t code) {
+  peer_event_t ev;
+  return peer_next(&ev) && is_error_reply(&ev, cid, code);
 }
 
 static void channel_ids_are_per_client(void) {
-  int sv[SOCKET_PAIR_FD_COUNT];
   pcsc_fido_daemon_channels_t channels;
   pcsc_fido_daemon_request_context_t ctx;
   const uint8_t ping[] = {0xAAu};
   uint32_t cid_a;
   uint32_t cid_b;
   handler_setup();
-  expect_true(uhid_pair(sv) == 0, "socketpair channels");
+  expect_true(peer_open(), "socketpair channels");
   pcsc_fido_daemon_channels_init(&channels);
-  ctx.fd = sv[0];
+  ctx.fd = g_peer.daemon_fd;
   ctx.channels = &channels;
-  cid_a = send_init(&ctx, sv[1], U32_ALL_ONES);
-  cid_b = send_init(&ctx, sv[1], U32_ALL_ONES);
+  cid_a = send_init(&ctx, U32_ALL_ONES);
+  cid_b = send_init(&ctx, U32_ALL_ONES);
   expect_true(cid_a != 0u && cid_a != U32_ALL_ONES, "first channel is valid");
   expect_true(cid_b != 0u && cid_b != U32_ALL_ONES, "second channel is valid");
   expect_true(cid_a != cid_b, "each broadcast INIT allocates its own channel");
-  expect_true(send_init(&ctx, sv[1], cid_a) == cid_a,
+  expect_true(send_init(&ctx, cid_a) == cid_a,
               "INIT on a live channel resynchronizes it and keeps its ID");
-  expect_true(send_init(&ctx, sv[1], TEST_CID) == 0u &&
+  expect_true(send_init(&ctx, TEST_CID) == 0u &&
                   !pcsc_fido_daemon_channels_touch(&channels, TEST_CID),
               "INIT on an unknown channel does not allocate it");
   pcsc_fido_daemon_handle_hid_request(&ctx, TEST_CID, PCSC_FIDO_HID_CMD_PING,
                                       ping, sizeof(ping));
-  expect_true(
-      reply_is_error(sv[1], TEST_CID, PCSC_FIDO_DAEMON_ERR_INVALID_CHANNEL),
-      "a request on an unknown channel gets ERR_INVALID_CHANNEL");
+  expect_true(reply_is_error(TEST_CID, PCSC_FIDO_DAEMON_ERR_INVALID_CHANNEL),
+              "a request on an unknown channel gets ERR_INVALID_CHANNEL");
   pcsc_fido_daemon_handle_hid_request(&ctx, cid_b, PCSC_FIDO_HID_CMD_PING, ping,
                                       sizeof(ping));
   {
-    struct uhid_event ev;
+    peer_event_t ev;
     expect_true(
-        read_uhid_event(sv[1], &ev) &&
-            pcsc_fido_daemon_hid_packet_cid(ev.u.input2.data) == cid_b &&
-            ev.u.input2.data[PCSC_FIDO_HID_OFF_CMD] ==
+        peer_next(&ev) && pcsc_fido_daemon_hid_packet_cid(ev.data) == cid_b &&
+            ev.data[PCSC_FIDO_HID_OFF_CMD] ==
                 (uint8_t)(PCSC_FIDO_HID_TYPE_INIT | PCSC_FIDO_HID_CMD_PING),
         "PING on the second channel is answered on that channel");
   }
-  close(sv[0]);
-  close(sv[1]);
+  peer_close();
 }
 
 static void channel_table_evicts_least_recently_used(void) {
@@ -549,9 +707,6 @@ static void channel_table_evicts_least_recently_used(void) {
 }
 
 static void cancel_is_scoped_to_session_owner(void) {
-  int sv[SOCKET_PAIR_FD_COUNT];
-  pthread_t drain_thread;
-  socket_drain_arg_t drain_arg;
   pcsc_fido_daemon_channels_t channels;
   pcsc_fido_daemon_request_context_t ctx;
   const uint8_t get_info[] = {0x04u};
@@ -562,13 +717,12 @@ static void cancel_is_scoped_to_session_owner(void) {
   handler_setup();
   mock_pcsc_set_readers("Handler Test Reader 00 00");
   mock_pcsc_set_transmit_response(mock_resp, sizeof(mock_resp));
-  expect_true(uhid_pair(sv) == 0, "socketpair cancel owner");
+  expect_true(peer_open(), "socketpair cancel owner");
   pcsc_fido_daemon_channels_init(&channels);
-  ctx.fd = sv[0];
+  ctx.fd = g_peer.daemon_fd;
   ctx.channels = &channels;
-  cid_a = send_init(&ctx, sv[1], U32_ALL_ONES);
-  cid_b = send_init(&ctx, sv[1], U32_ALL_ONES);
-  start_socket_drain(sv[1], &drain_thread, &drain_arg);
+  cid_a = send_init(&ctx, U32_ALL_ONES);
+  cid_b = send_init(&ctx, U32_ALL_ONES);
   pcsc_fido_daemon_handle_hid_request(&ctx, cid_a, PCSC_FIDO_HID_CMD_CBOR,
                                       get_info, sizeof(get_info));
   before = mock_pcsc_transmit_call_count();
@@ -587,16 +741,15 @@ static void cancel_is_scoped_to_session_owner(void) {
   expect_true(
       mock_pcsc_transmit_call_count() - before == RESET_SESSION_TRANSMITS,
       "the session owner's CANCEL resets the PC/SC session");
-  stop_socket_drain(sv[0], sv[1], drain_thread);
+  peer_close();
 }
 
 static void unframeable_response_gets_error(void) {
-  int sv[SOCKET_PAIR_FD_COUNT];
   pcsc_fido_daemon_channels_t channels;
   pcsc_fido_daemon_request_context_t ctx;
   const uint8_t get_info[] = {0x04u};
   static uint8_t card_resp[UNFRAMEABLE_RESPONSE_LEN + PCSC_FIDO_SW_LEN];
-  struct uhid_event ev;
+  peer_event_t ev;
   bool got_error = false;
   uint32_t cid;
   handler_setup();
@@ -604,26 +757,20 @@ static void unframeable_response_gets_error(void) {
   pcsc_fido_zero_bytes(card_resp, sizeof(card_resp));
   card_resp[UNFRAMEABLE_RESPONSE_LEN] = (uint8_t)SW_OK_HIGH;
   mock_pcsc_set_transmit_response(card_resp, sizeof(card_resp));
-  expect_true(uhid_pair(sv) == 0, "socketpair unframeable response");
+  expect_true(peer_open(), "socketpair unframeable response");
   pcsc_fido_daemon_channels_init(&channels);
-  ctx.fd = sv[0];
+  ctx.fd = g_peer.daemon_fd;
   ctx.channels = &channels;
-  cid = send_init(&ctx, sv[1], U32_ALL_ONES);
+  cid = send_init(&ctx, U32_ALL_ONES);
   pcsc_fido_daemon_handle_hid_request(&ctx, cid, PCSC_FIDO_HID_CMD_CBOR,
                                       get_info, sizeof(get_info));
-  while (!got_error &&
-         recv(sv[1], &ev, sizeof(ev), MSG_DONTWAIT) == (ssize_t)sizeof(ev)) {
-    got_error =
-        pcsc_fido_daemon_hid_packet_cid(ev.u.input2.data) == cid &&
-        ev.u.input2.data[PCSC_FIDO_HID_OFF_CMD] ==
-            (uint8_t)(PCSC_FIDO_HID_TYPE_INIT | PCSC_FIDO_HID_CMD_ERROR) &&
-        ev.u.input2.data[PCSC_FIDO_HID_OFF_INIT_DATA] ==
-            PCSC_FIDO_DAEMON_ERR_OTHER;
+  expect_true(peer_sync(), "host peer caught up after the exchange");
+  while (!got_error && peer_pop(&ev)) {
+    got_error = is_error_reply(&ev, cid, PCSC_FIDO_DAEMON_ERR_OTHER);
   }
   expect_true(got_error,
               "a card response too large to frame is answered with ERR_OTHER");
-  close(sv[0]);
-  close(sv[1]);
+  peer_close();
 }
 
 /* Card transmits one CBOR request took: 1 on a kept session, 2 (SELECT +
@@ -638,28 +785,26 @@ static unsigned cbor_transmits(const pcsc_fido_daemon_request_context_t* ctx,
 }
 
 static void short_requests_get_invalid_len(void) {
-  int sv[SOCKET_PAIR_FD_COUNT];
   pcsc_fido_daemon_channels_t channels;
   pcsc_fido_daemon_request_context_t ctx;
   const uint8_t short_msg[] = {0x00u, 0x01u, 0x00u};
   uint32_t cid;
   handler_setup();
   mock_pcsc_set_readers("Handler Test Reader 00 00");
-  expect_true(uhid_pair(sv) == 0, "socketpair short requests");
+  expect_true(peer_open(), "socketpair short requests");
   pcsc_fido_daemon_channels_init(&channels);
-  ctx.fd = sv[0];
+  ctx.fd = g_peer.daemon_fd;
   ctx.channels = &channels;
-  cid = send_init(&ctx, sv[1], U32_ALL_ONES);
+  cid = send_init(&ctx, U32_ALL_ONES);
   expect_true(cbor_transmits(&ctx, cid, PCSC_FIDO_NULL, 0u) == 0u,
               "an empty CBOR request never reaches the card");
-  expect_true(reply_is_error(sv[1], cid, PCSC_FIDO_DAEMON_ERR_INVALID_LEN),
+  expect_true(reply_is_error(cid, PCSC_FIDO_DAEMON_ERR_INVALID_LEN),
               "an empty CBOR request gets ERR_INVALID_LEN");
   pcsc_fido_daemon_handle_hid_request(&ctx, cid, PCSC_FIDO_HID_CMD_MSG,
                                       short_msg, sizeof(short_msg));
-  expect_true(reply_is_error(sv[1], cid, PCSC_FIDO_DAEMON_ERR_INVALID_LEN),
+  expect_true(reply_is_error(cid, PCSC_FIDO_DAEMON_ERR_INVALID_LEN),
               "a U2F MSG shorter than an APDU header gets ERR_INVALID_LEN");
-  close(sv[0]);
-  close(sv[1]);
+  peer_close();
 }
 
 /* getAssertion with a real (non-empty) clientDataHash, i.e. not a probe. */
@@ -717,9 +862,6 @@ static void rate_limit_keeps_owner(
 }
 
 static void get_next_assertion_keeps_session(void) {
-  int sv[SOCKET_PAIR_FD_COUNT];
-  pthread_t drain_thread;
-  socket_drain_arg_t drain_arg;
   pcsc_fido_daemon_channels_t channels;
   pcsc_fido_daemon_request_context_t ctx;
   uint8_t get_assertion[GET_ASSERTION_LEN];
@@ -734,13 +876,12 @@ static void get_next_assertion_keeps_session(void) {
   handler_setup();
   mock_pcsc_set_readers("Handler Test Reader 00 00");
   build_get_assertion(get_assertion);
-  expect_true(uhid_pair(sv) == 0, "socketpair getNextAssertion");
+  expect_true(peer_open(), "socketpair getNextAssertion");
   pcsc_fido_daemon_channels_init(&channels);
-  ctx.fd = sv[0];
+  ctx.fd = g_peer.daemon_fd;
   ctx.channels = &channels;
-  cid_a = send_init(&ctx, sv[1], U32_ALL_ONES);
-  cid_b = send_init(&ctx, sv[1], U32_ALL_ONES);
-  start_socket_drain(sv[1], &drain_thread, &drain_arg);
+  cid_a = send_init(&ctx, U32_ALL_ONES);
+  cid_b = send_init(&ctx, U32_ALL_ONES);
 
   mock_pcsc_set_transmit_response(one_credential, sizeof(one_credential));
   (void)cbor_transmits(&ctx, cid_a, get_assertion, sizeof(get_assertion));
@@ -795,13 +936,10 @@ static void get_next_assertion_keeps_session(void) {
   rate_limit_keeps_owner(&ctx, cid_a, cid_b, get_assertion, get_next,
                          sizeof(get_next), get_info, sizeof(get_info),
                          three_credentials, sizeof(three_credentials));
-  stop_socket_drain(sv[0], sv[1], drain_thread);
+  peer_close();
 }
 
 static void evicting_session_owner_resets_card(void) {
-  int sv[SOCKET_PAIR_FD_COUNT];
-  pthread_t drain_thread;
-  socket_drain_arg_t drain_arg;
   pcsc_fido_daemon_channels_t channels;
   pcsc_fido_daemon_request_context_t ctx;
   uint8_t get_assertion[GET_ASSERTION_LEN];
@@ -815,15 +953,14 @@ static void evicting_session_owner_resets_card(void) {
   handler_setup();
   mock_pcsc_set_readers("Handler Test Reader 00 00");
   build_get_assertion(get_assertion);
-  expect_true(uhid_pair(sv) == 0, "socketpair eviction reset");
+  expect_true(peer_open(), "socketpair eviction reset");
   pcsc_fido_daemon_channels_init(&channels);
-  ctx.fd = sv[0];
+  ctx.fd = g_peer.daemon_fd;
   ctx.channels = &channels;
   for (unsigned i = 0u; i < PCSC_FIDO_DAEMON_CHANNEL_SLOTS; i++) {
-    cids[i] = send_init(&ctx, sv[1], U32_ALL_ONES);
+    cids[i] = send_init(&ctx, U32_ALL_ONES);
     expect_true(cids[i] != 0u, "broadcast INIT allocates a channel");
   }
-  start_socket_drain(sv[1], &drain_thread, &drain_arg);
   mock_pcsc_set_transmit_response(three_credentials, sizeof(three_credentials));
   (void)cbor_transmits(&ctx, cids[0], get_assertion, sizeof(get_assertion));
   for (unsigned i = 1u; i < PCSC_FIDO_DAEMON_CHANNEL_SLOTS; i++) {
@@ -851,18 +988,10 @@ static void evicting_session_owner_resets_card(void) {
   expect_true(cbor_transmits(&ctx, replacement, get_info, sizeof(get_info)) ==
                   RESET_SESSION_TRANSMITS,
               "the next request after eviction reconnects to the card");
-  stop_socket_drain(sv[0], sv[1], drain_thread);
-}
-
-static void queue_uhid_event(int fd, const struct uhid_event* ev,
-                             const char* what) {
-  expect_true(write(fd, ev, sizeof(*ev)) == (ssize_t)sizeof(*ev), what);
+  peer_close();
 }
 
 static void uhid_close_during_exchange_releases_session(void) {
-  int sv[SOCKET_PAIR_FD_COUNT];
-  pthread_t drain_thread;
-  socket_drain_arg_t drain_arg;
   pcsc_fido_daemon_channels_t channels;
   pcsc_fido_daemon_request_context_t ctx;
   struct uhid_event ev;
@@ -870,64 +999,62 @@ static void uhid_close_during_exchange_releases_session(void) {
   const uint8_t mock_resp[] = {0x00u, 0xA1u, 0x01u, 0x02u, 0x90u, 0x00u};
   uint32_t cid;
   uint32_t closed_cid;
+  unsigned keepalives_before;
   handler_setup();
   mock_pcsc_set_readers("Handler Test Reader 00 00");
   mock_pcsc_set_transmit_response(mock_resp, sizeof(mock_resp));
-  expect_true(uhid_pair(sv) == 0, "socketpair close during exchange");
+  expect_true(peer_open(), "socketpair close during exchange");
   pcsc_fido_daemon_channels_init(&channels);
-  ctx.fd = sv[0];
+  ctx.fd = g_peer.daemon_fd;
   ctx.channels = &channels;
-  cid = send_init(&ctx, sv[1], U32_ALL_ONES);
+  cid = send_init(&ctx, U32_ALL_ONES);
   pcsc_fido_zero_bytes(&ev, sizeof(ev));
   ev.type = UHID_CLOSE;
-  queue_uhid_event(sv[1], &ev, "queue UHID_CLOSE");
+  peer_inject(&ev, "queue UHID_CLOSE");
+  keepalives_before = peer_keepalives();
   pcsc_fido_daemon_handle_hid_request(&ctx, cid, PCSC_FIDO_HID_CMD_CBOR,
                                       get_info, sizeof(get_info));
   expect_true(channels.session_owner == 0u,
               "a closed client no longer owns the PC/SC session");
-  (void)shutdown(sv[0], SHUT_WR);
-  expect_true(!read_uhid_event(sv[1], &ev),
+  expect_true(peer_quiet() && peer_keepalives() == keepalives_before,
               "a closed client gets neither a response nor keepalives");
-  close(sv[0]);
-  close(sv[1]);
-  expect_true(uhid_pair(sv) == 0, "socketpair after close");
-  ctx.fd = sv[0];
+  peer_close();
+  expect_true(peer_open(), "socketpair after close");
+  ctx.fd = g_peer.daemon_fd;
   closed_cid = cid;
   expect_true(!pcsc_fido_daemon_channels_touch(&channels, closed_cid),
               "a closed client loses its channel ID");
-  cid = send_init(&ctx, sv[1], U32_ALL_ONES);
+  cid = send_init(&ctx, U32_ALL_ONES);
   expect_true(cid != 0u && cid != closed_cid,
               "the next client gets a new channel ID from INIT");
-  start_socket_drain(sv[1], &drain_thread, &drain_arg);
   expect_true(
       cbor_transmits(&ctx, closed_cid, get_info, sizeof(get_info)) == 0u,
       "the closed channel ID does not reach the card");
   expect_true(cbor_transmits(&ctx, cid, get_info, sizeof(get_info)) ==
                   RESET_SESSION_TRANSMITS,
               "the next client after a close starts on a fresh session");
-  stop_socket_drain(sv[0], sv[1], drain_thread);
+  peer_close();
 }
 
 static void init_on_busy_channel_resyncs(void) {
-  int sv[SOCKET_PAIR_FD_COUNT];
   pcsc_fido_daemon_channels_t channels;
   pcsc_fido_daemon_request_context_t ctx;
   struct uhid_event ev;
+  peer_event_t reply;
   uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE];
   const uint8_t nonce[PCSC_FIDO_HID_INIT_NONCE_LEN] = {
       0x11u, 0x22u, 0x33u, 0x44u, 0x55u, 0x66u, 0x77u, 0x88u};
   const uint8_t get_info[] = {0x04u};
   const uint8_t mock_resp[] = {0x00u, 0xA1u, 0x01u, 0x02u, 0x90u, 0x00u};
-  const uint8_t* reply;
   uint32_t cid;
   handler_setup();
   mock_pcsc_set_readers("Handler Test Reader 00 00");
   mock_pcsc_set_transmit_response(mock_resp, sizeof(mock_resp));
-  expect_true(uhid_pair(sv) == 0, "socketpair resync");
+  expect_true(peer_open(), "socketpair resync");
   pcsc_fido_daemon_channels_init(&channels);
-  ctx.fd = sv[0];
+  ctx.fd = g_peer.daemon_fd;
   ctx.channels = &channels;
-  cid = send_init(&ctx, sv[1], U32_ALL_ONES);
+  cid = send_init(&ctx, U32_ALL_ONES);
   expect_true(pcsc_fido_hid_encode_init_packet(cid, PCSC_FIDO_HID_CMD_INIT,
                                                nonce, sizeof(nonce), packet),
               "encode resync INIT");
@@ -936,34 +1063,26 @@ static void init_on_busy_channel_resyncs(void) {
   ev.u.output.size = PCSC_FIDO_HID_PACKET_SIZE;
   (void)pcsc_fido_copy_bytes(ev.u.output.data, sizeof(ev.u.output.data), 0u,
                              packet, sizeof(packet));
-  queue_uhid_event(sv[1], &ev, "queue resync INIT");
+  peer_inject(&ev, "queue resync INIT");
   pcsc_fido_daemon_handle_hid_request(&ctx, cid, PCSC_FIDO_HID_CMD_CBOR,
                                       get_info, sizeof(get_info));
-  expect_true(read_uhid_event(sv[1], &ev) && ev.type == UHID_INPUT2,
+  expect_true(peer_next(&reply) && reply.type == UHID_INPUT2,
               "the resync is answered");
-  reply = ev.u.input2.data;
   expect_true(
-      pcsc_fido_daemon_hid_packet_cid(reply) == cid &&
-          reply[PCSC_FIDO_HID_OFF_CMD] ==
+      pcsc_fido_daemon_hid_packet_cid(reply.data) == cid &&
+          reply.data[PCSC_FIDO_HID_OFF_CMD] ==
               (uint8_t)(PCSC_FIDO_HID_TYPE_INIT | PCSC_FIDO_HID_CMD_INIT) &&
-          memcmp(reply + PCSC_FIDO_HID_OFF_INIT_DATA, nonce, sizeof(nonce)) ==
-              0 &&
-          pcsc_fido_daemon_hid_packet_cid(reply + PCSC_FIDO_HID_OFF_INIT_DATA +
-                                          PCSC_FIDO_HID_INIT_NONCE_LEN) == cid,
+          memcmp(reply.data + PCSC_FIDO_HID_OFF_INIT_DATA, nonce,
+                 sizeof(nonce)) == 0 &&
+          init_reply_assigned_cid(&reply) == cid,
       "INIT on the busy channel is answered, keeping the channel ID");
-  (void)shutdown(sv[0], SHUT_WR);
-  expect_true(!read_uhid_event(sv[1], &ev),
-              "the abandoned request itself gets no response");
+  expect_true(peer_quiet(), "the abandoned request itself gets no response");
   expect_true(channels.session_owner == 0u,
               "the resync releases the PC/SC session");
-  close(sv[0]);
-  close(sv[1]);
+  peer_close();
 }
 
 static void other_channel_starts_a_fresh_session(void) {
-  int sv[SOCKET_PAIR_FD_COUNT];
-  pthread_t drain_thread;
-  socket_drain_arg_t drain_arg;
   pcsc_fido_daemon_channels_t channels;
   pcsc_fido_daemon_request_context_t ctx;
   const uint8_t get_info[] = {0x04u};
@@ -971,13 +1090,12 @@ static void other_channel_starts_a_fresh_session(void) {
   uint32_t cid_b;
   handler_setup();
   mock_pcsc_set_readers("Handler Test Reader 00 00");
-  expect_true(uhid_pair(sv) == 0, "socketpair other channel");
+  expect_true(peer_open(), "socketpair other channel");
   pcsc_fido_daemon_channels_init(&channels);
-  ctx.fd = sv[0];
+  ctx.fd = g_peer.daemon_fd;
   ctx.channels = &channels;
-  cid_a = send_init(&ctx, sv[1], U32_ALL_ONES);
-  cid_b = send_init(&ctx, sv[1], U32_ALL_ONES);
-  start_socket_drain(sv[1], &drain_thread, &drain_arg);
+  cid_a = send_init(&ctx, U32_ALL_ONES);
+  cid_b = send_init(&ctx, U32_ALL_ONES);
   expect_true(cbor_transmits(&ctx, cid_a, get_info, sizeof(get_info)) ==
                   RESET_SESSION_TRANSMITS,
               "the first command opens a session");
@@ -995,13 +1113,10 @@ static void other_channel_starts_a_fresh_session(void) {
   expect_true(cbor_transmits(&ctx, cid_b, get_info, sizeof(get_info)) ==
                   KEPT_SESSION_TRANSMITS,
               "the previous owner's CANCEL leaves the card connected");
-  stop_socket_drain(sv[0], sv[1], drain_thread);
+  peer_close();
 }
 
 static void credential_count_is_capped(void) {
-  int sv[SOCKET_PAIR_FD_COUNT];
-  pthread_t drain_thread;
-  socket_drain_arg_t drain_arg;
   pcsc_fido_daemon_channels_t channels;
   pcsc_fido_daemon_request_context_t ctx;
   uint8_t get_assertion[GET_ASSERTION_LEN];
@@ -1014,12 +1129,11 @@ static void credential_count_is_capped(void) {
   handler_setup();
   mock_pcsc_set_readers("Handler Test Reader 00 00");
   build_get_assertion(get_assertion);
-  expect_true(uhid_pair(sv) == 0, "socketpair credential cap");
+  expect_true(peer_open(), "socketpair credential cap");
   pcsc_fido_daemon_channels_init(&channels);
-  ctx.fd = sv[0];
+  ctx.fd = g_peer.daemon_fd;
   ctx.channels = &channels;
-  cid = send_init(&ctx, sv[1], U32_ALL_ONES);
-  start_socket_drain(sv[1], &drain_thread, &drain_arg);
+  cid = send_init(&ctx, U32_ALL_ONES);
   mock_pcsc_set_transmit_response(over_cap, sizeof(over_cap));
   (void)cbor_transmits(&ctx, cid, get_assertion, sizeof(get_assertion));
   expect_true(
@@ -1030,13 +1144,10 @@ static void credential_count_is_capped(void) {
   expect_true(
       channels.next_assertions_left == PCSC_FIDO_DAEMON_MAX_NEXT_ASSERTIONS,
       "the largest CBOR credential count is stored as the cap");
-  stop_socket_drain(sv[0], sv[1], drain_thread);
+  peer_close();
 }
 
 static void idle_session_is_dropped(void) {
-  int sv[SOCKET_PAIR_FD_COUNT];
-  pthread_t drain_thread;
-  socket_drain_arg_t drain_arg;
   pcsc_fido_daemon_channels_t channels;
   pcsc_fido_daemon_request_context_t ctx;
   const uint8_t get_info[] = {0x04u};
@@ -1044,21 +1155,20 @@ static void idle_session_is_dropped(void) {
   time_t frozen;
   handler_setup();
   mock_pcsc_set_readers("Handler Test Reader 00 00");
-  expect_true(uhid_pair(sv) == 0, "socketpair idle session");
+  expect_true(peer_open(), "socketpair idle session");
   pcsc_fido_daemon_channels_init(&channels);
-  frozen = g_fake_time;
+  frozen = atomic_load(&g_fake_time);
   expect_true(pcsc_fido_daemon_channels_poll_timeout_ms(&channels, 0) == 0 &&
-                  g_fake_time == frozen,
+                  atomic_load(&g_fake_time) == frozen,
               "no held session and a zero cap do not read the clock");
   expect_true(pcsc_fido_daemon_channels_poll_timeout_ms(
                   &channels, PCSC_FIDO_UHID_POLL_TIMEOUT_MS) ==
                       PCSC_FIDO_UHID_POLL_TIMEOUT_MS &&
-                  g_fake_time == frozen,
+                  atomic_load(&g_fake_time) == frozen,
               "no held session leaves the poll cap unchanged");
-  ctx.fd = sv[0];
+  ctx.fd = g_peer.daemon_fd;
   ctx.channels = &channels;
-  cid = send_init(&ctx, sv[1], U32_ALL_ONES);
-  start_socket_drain(sv[1], &drain_thread, &drain_arg);
+  cid = send_init(&ctx, U32_ALL_ONES);
   expect_true(cbor_transmits(&ctx, cid, get_info, sizeof(get_info)) ==
                   RESET_SESSION_TRANSMITS,
               "getInfo opens a session");
@@ -1070,7 +1180,7 @@ static void idle_session_is_dropped(void) {
                   &channels, PCSC_FIDO_UHID_POLL_TIMEOUT_MS) ==
                   PCSC_FIDO_UHID_POLL_TIMEOUT_MS,
               "a live session does not stretch the poll wait");
-  g_fake_time = channels.session_deadline - 1;
+  atomic_store(&g_fake_time, channels.session_deadline - 1);
   expect_true(pcsc_fido_daemon_channels_expire_session(&channels),
               "the idle deadline drops the session");
   pcsc_fido_bridge_reset();
@@ -1081,19 +1191,10 @@ static void idle_session_is_dropped(void) {
   expect_true(cbor_transmits(&ctx, cid, get_info, sizeof(get_info)) ==
                   RESET_SESSION_TRANSMITS,
               "the next command after idle reconnects to the card");
-  stop_socket_drain(sv[0], sv[1], drain_thread);
-}
-
-static void discard_queued_events(int peer_fd) {
-  struct uhid_event ev;
-  ssize_t got;
-  do {
-    got = recv(peer_fd, &ev, sizeof(ev), MSG_DONTWAIT);
-  } while (got == (ssize_t)sizeof(ev));
+  peer_close();
 }
 
 static void worker_start_failure_keeps_session(void) {
-  int sv[SOCKET_PAIR_FD_COUNT];
   pcsc_fido_daemon_channels_t channels;
   pcsc_fido_daemon_request_context_t ctx;
   uint8_t get_assertion[GET_ASSERTION_LEN];
@@ -1105,14 +1206,14 @@ static void worker_start_failure_keeps_session(void) {
   handler_setup();
   mock_pcsc_set_readers("Handler Test Reader 00 00");
   build_get_assertion(get_assertion);
-  expect_true(uhid_pair(sv) == 0, "socketpair worker start failure");
+  expect_true(peer_open(), "socketpair worker start failure");
   pcsc_fido_daemon_channels_init(&channels);
-  ctx.fd = sv[0];
+  ctx.fd = g_peer.daemon_fd;
   ctx.channels = &channels;
-  cid = send_init(&ctx, sv[1], U32_ALL_ONES);
+  cid = send_init(&ctx, U32_ALL_ONES);
   mock_pcsc_set_transmit_response(three_credentials, sizeof(three_credentials));
   (void)cbor_transmits(&ctx, cid, get_assertion, sizeof(get_assertion));
-  discard_queued_events(sv[1]);
+  peer_discard();
   expect_true(channels.session_owner == cid &&
                   channels.next_assertions_left == TEST_LIT_2U,
               "the getAssertion leaves two getNextAssertion calls");
@@ -1120,7 +1221,7 @@ static void worker_start_failure_keeps_session(void) {
   expect_true(cbor_transmits(&ctx, cid, get_next, sizeof(get_next)) == 0u,
               "a worker that never starts does not reach the card");
   atomic_store_explicit(&g_fail_pthread_create, false, memory_order_relaxed);
-  expect_true(reply_is_error(sv[1], cid, PCSC_FIDO_DAEMON_ERR_OTHER),
+  expect_true(reply_is_error(cid, PCSC_FIDO_DAEMON_ERR_OTHER),
               "a worker that never starts is answered ERR_OTHER");
   expect_true(channels.session_owner == cid &&
                   channels.next_assertions_left == TEST_LIT_2U,
@@ -1128,8 +1229,7 @@ static void worker_start_failure_keeps_session(void) {
   expect_true(cbor_transmits(&ctx, cid, get_next, sizeof(get_next)) ==
                   KEPT_SESSION_TRANSMITS,
               "the retried getNextAssertion runs on the kept session");
-  close(sv[0]);
-  close(sv[1]);
+  peer_close();
 }
 
 int main(void) {

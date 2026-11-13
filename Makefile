@@ -26,6 +26,7 @@ INSTALL_BUILD_TYPE ?= Release
 LINT_FLAGS ?=
 INSTALL_DEPS ?= 0
 PCSC_FIDO_DEPS_SCOPE ?= full
+PCSC_FIDO_LLVM_PIN ?= 0
 CI_LOCAL_FLAGS ?=
 # Honor CI_LOCAL_FLAGS only from the make command line, not the shell environment.
 _CI_LOCAL_FLAGS :=
@@ -68,6 +69,7 @@ ubsan: PCSC_FIDO_DEPS_SCOPE=build
 valgrind: PCSC_FIDO_DEPS_SCOPE=verify
 tsan: PCSC_FIDO_DEPS_SCOPE=build
 lint: PCSC_FIDO_DEPS_SCOPE=full
+lint: PCSC_FIDO_LLVM_PIN=1
 verify: PCSC_FIDO_DEPS_SCOPE=verify
 
 build: ensure-build-owner maybe-deps
@@ -206,12 +208,13 @@ lima: ensure-build-owner
 
 deps:
 	@PCSC_FIDO_ALLOW_SUDO_DEPS=1 AUTO_INSTALL_LINUX_DEPS=1 \
-	  PCSC_FIDO_DEPS_SCOPE="$(PCSC_FIDO_DEPS_SCOPE)" \
+	  PCSC_FIDO_DEPS_SCOPE="$(PCSC_FIDO_DEPS_SCOPE)" PCSC_FIDO_LLVM_PIN="$(PCSC_FIDO_LLVM_PIN)" \
 	  bash .github/scripts/install-linux-deps.sh
 
 maybe-deps:
 	@if [ "$(INSTALL_DEPS)" != "0" ]; then \
-	  $(MAKE) deps INSTALL_DEPS="$(INSTALL_DEPS)" PCSC_FIDO_DEPS_SCOPE="$(PCSC_FIDO_DEPS_SCOPE)"; \
+	  $(MAKE) deps INSTALL_DEPS="$(INSTALL_DEPS)" PCSC_FIDO_DEPS_SCOPE="$(PCSC_FIDO_DEPS_SCOPE)" \
+	    PCSC_FIDO_LLVM_PIN="$(PCSC_FIDO_LLVM_PIN)"; \
 	fi
 
 # Install: stage a Release pcsc-fido binary into the prefix (no unit tests). Rebuild runs as
@@ -246,7 +249,7 @@ uninstall:
 # release-build-package.sh as the Release workflow and
 # `make ci-local CI_LOCAL_FLAGS="--release-arch <host>"`: fresh build/release-<fmt>-<arch>
 # tree, CMAKE_BUILD_TYPE=Release (LTO, strip, no .comment), ctest, CPack, then
-# verify-glibc-ceiling.sh + verify-release-elf-hardening.sh on the packaged binary.
+# verify-release-elf-hardening.sh. The glibc ceiling runs in CI, not here.
 # Artifacts land in dist/. PACKAGE_FORMAT=auto builds every format whose packager is
 # installed (dpkg-deb -> deb, rpmbuild -> rpm). Debug binaries: make debug.
 PACKAGE_FORMAT ?= auto

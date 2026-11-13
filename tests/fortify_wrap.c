@@ -25,9 +25,7 @@
 #include <poll.h>
 #include <stdlib.h>
 #include <sys/types.h>
-
-extern ssize_t __wrap_read(int fd, void* buf, size_t count);
-extern int __wrap_poll(struct pollfd* fds, nfds_t nfds, int timeout);
+#include "linker_wrap.h"
 
 ssize_t __wrap___read_chk(int fd, void* buf, size_t nbytes, size_t buflen) {
   if (nbytes > buflen) {

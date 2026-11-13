@@ -65,10 +65,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 
 # shellcheck source=helper-codeql-pins.sh
-# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/helper-codeql-pins.sh"
 # shellcheck source=helper-container-bind-mount.sh
-# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/helper-container-bind-mount.sh"
 
 pcsc_fido_container_engine() {
@@ -241,7 +239,6 @@ codeql_container_entry() {
   fi
 
   # shellcheck source=helper-container-bind-mount.sh
-  # shellcheck disable=SC1091
   source "${PCSC_FIDO_ROOT}/.github/scripts/helper-container-bind-mount.sh"
 
   # Root -> install deps -> prepare/chown -> drop to HOST_UID (nero-nfc CodeQL recipe).
@@ -409,8 +406,7 @@ fi
 if ! [[ -v CI_PLATFORM ]]; then
   export CI_PLATFORM=linux/amd64
 fi
-PLATFORM_ARGS=()
-pcsc_fido_load_ci_platform_args
+mapfile -t PLATFORM_ARGS < <(pcsc_fido_ci_platform_docker_args)
 
 _CI_LOCAL_WORK_ROOT_TO_CLEAN=""
 codeql_local_cleanup_worktree() {

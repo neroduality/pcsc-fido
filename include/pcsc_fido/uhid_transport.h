@@ -29,7 +29,7 @@
 /* Spec prefixes for docs/spec-traceability.yaml: CTAP2.3 CTAPHID pid.codes
  * IMPL-POLICY (cite in-file as [CTAP2.3], [CTAPHID], [pid.codes],
  * [IMPL-POLICY]). */
-enum {
+enum : unsigned {
   PCSC_FIDO_DAEMON_CAP_WINK = 0x01u,            /* [CTAPHID] */
   PCSC_FIDO_DAEMON_CAP_CBOR = 0x04u,            /* [CTAPHID] */
   PCSC_FIDO_DAEMON_ERR_INVALID_CMD = 0x01u,     /* [CTAPHID] */

@@ -34,6 +34,7 @@
 #include <unistd.h>
 #include "pcsc_fido/mem_util.h"
 #include "pcsc_fido/pcsc_log.h"
+#include "linker_wrap.h"
 
 enum {
   FAKE_UHID_FD = 120,
@@ -48,7 +49,6 @@ enum {
   HID_HDR_C = 0x43u,
   HID_CID_BYTE_3_OFF = TEST_LIT_3,
   HID_CMD_OFF = TEST_LIT_4,
-  HID_INIT_PKT_FLAG = TEST_LIT_0X80U,
   HID_DATA_OFF = TEST_LIT_7,
   HID_DATA_NEXT_OFF = TEST_LIT_8,
   SECOND_ARM_CREATE_COUNT = TEST_LIT_2U,
@@ -80,9 +80,6 @@ static unsigned g_uhid_create_count;
 static unsigned g_uhid_destroy_count;
 static uint8_t g_ping_payload[] = {TEST_PING_PAYLOAD_BYTE};
 
-extern int __real_poll(struct pollfd* fds, nfds_t nfds, int timeout);
-extern int __real_nanosleep(const struct timespec* req, struct timespec* rem);
-
 // rem matches nanosleep(2); LD --wrap requires a non-const second parameter.
 int __wrap_nanosleep(const struct timespec* req PCSC_FIDO_MAYBE_UNUSED,
                      struct timespec* rem PCSC_FIDO_MAYBE_UNUSED) {
@@ -93,19 +90,14 @@ int __wrap_nanosleep(const struct timespec* req PCSC_FIDO_MAYBE_UNUSED,
 static int g_pthread_create_calls;
 static int g_fail_pthread_create_call;
 
-extern int __real_pthread_create(pthread_t* thread, const pthread_attr_t* attr,
-                                 void* (*start)(void*), void* arg);
-
 int __wrap_pthread_create(pthread_t* thread, const pthread_attr_t* attr,
-                          void* (*start)(void*), void* arg) {
+                          void* (*start_routine)(void*), void* arg) {
   g_pthread_create_calls++;
   if (g_pthread_create_calls == g_fail_pthread_create_call) {
     return EAGAIN;
   }
-  return __real_pthread_create(thread, attr, start, arg);
+  return __real_pthread_create(thread, attr, start_routine, arg);
 }
-
-extern int __real_clock_gettime(clockid_t clock_id, struct timespec* ts);
 
 int __wrap_clock_gettime(clockid_t clock_id, struct timespec* ts) {
   if (clock_id != CLOCK_MONOTONIC || ts == PCSC_FIDO_NULL) {
@@ -116,9 +108,6 @@ int __wrap_clock_gettime(clockid_t clock_id, struct timespec* ts) {
   ts->tv_nsec = 0;
   return 0;
 }
-
-extern ssize_t __real_read(int fd, void* buf, size_t count);
-extern ssize_t __real_write(int fd, const void* buf, size_t count);
 
 static void maybe_request_stop_once(int* flag);
 
@@ -153,7 +142,8 @@ ssize_t __wrap_read(int fd, void* buf, size_t count) {
     packet[1] = HID_HDR_F;
     packet[HID_CID_BYTE_2_OFF] = HID_HDR_C;
     packet[HID_CID_BYTE_3_OFF] = 0x01u;
-    packet[HID_CMD_OFF] = (uint8_t)(HID_INIT_PKT_FLAG | PCSC_FIDO_HID_CMD_PING);
+    packet[HID_CMD_OFF] =
+        (uint8_t)(PCSC_FIDO_HID_TYPE_INIT | PCSC_FIDO_HID_CMD_PING);
     packet[HID_DATA_OFF] = (uint8_t)sizeof(g_ping_payload);
     packet[HID_DATA_NEXT_OFF] = g_ping_payload[0];
     (void)pcsc_fido_copy_bytes(ev->u.output.data, sizeof(packet), 0u, packet,
@@ -230,12 +220,10 @@ int __wrap_poll(struct pollfd* fds, nfds_t nfds, int timeout) {
       g_last_card_wake_fd = fds[i].fd;
     }
   }
-  if (timeout >= 0 && g_poll_timeout_zero_once) {
-    if (armed) {
-      g_poll_timeout_zero_once = 0;
-      maybe_request_stop_once(&g_raise_after_timeout_once);
-      return 0;
-    }
+  if (timeout >= 0 && g_poll_timeout_zero_once && armed) {
+    g_poll_timeout_zero_once = 0;
+    maybe_request_stop_once(&g_raise_after_timeout_once);
+    return 0;
   }
   for (i = 0u; i < nfds; i++) {
     if (fds[i].fd == FAKE_UHID_FD) {

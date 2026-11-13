@@ -19,31 +19,18 @@
 #include <stdio.h>
 
 void pcsc_fido_io_vprintf(FILE* stream, const char* fmt, va_list args) {
-#ifndef __clang_analyzer__
   va_list args_copy;
   if (stream == PCSC_FIDO_NULL || fmt == PCSC_FIDO_NULL) {
     return;
   }
   va_copy(args_copy, args);
-  /* fmt is validated by the printf format attribute on pcsc_fido_io_printf. */
-#if defined(__clang__)
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wformat-nonliteral"
-#endif
+  /* fmt is checked against the arguments by the printf format attribute on
+   * this function's declaration and on every variadic caller. */
   (void)vfprintf(stream, fmt, args_copy);
-#if defined(__clang__)
-#pragma clang diagnostic pop
-#endif
   va_end(args_copy);
-#else
-  (void)stream;
-  (void)fmt;
-  (void)args;
-#endif
 }
 
 void pcsc_fido_io_printf(FILE* stream, const char* fmt, ...) {
-#ifndef __clang_analyzer__
   va_list args;
   if (stream == PCSC_FIDO_NULL || fmt == PCSC_FIDO_NULL) {
     return;
@@ -51,46 +38,27 @@ void pcsc_fido_io_printf(FILE* stream, const char* fmt, ...) {
   va_start(args, fmt);
   pcsc_fido_io_vprintf(stream, fmt, args);
   va_end(args);
-#else
-  (void)stream;
-  (void)fmt;
-  (void)pcsc_fido_io_vprintf;
-#endif
 }
 
 void pcsc_fido_io_fputs(FILE* stream, const char* s) {
-#ifndef __clang_analyzer__
   if (stream == PCSC_FIDO_NULL || s == PCSC_FIDO_NULL) {
     return;
   }
   (void)fputs(s, stream);
-#else
-  (void)stream;
-  (void)s;
-#endif
 }
 
 void pcsc_fido_io_fputc(FILE* stream, int c) {
-#ifndef __clang_analyzer__
   if (stream == PCSC_FIDO_NULL) {
     return;
   }
   (void)fputc(c, stream);
-#else
-  (void)stream;
-  (void)c;
-#endif
 }
 
 #if defined(PCSC_FIDO_TESTING)
 void pcsc_fido_io_fflush(FILE* stream) {
-#ifndef __clang_analyzer__
   if (stream == PCSC_FIDO_NULL) {
     return;
   }
   (void)fflush(stream);
-#else
-  (void)stream;
-#endif
 }
 #endif

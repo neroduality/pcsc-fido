@@ -349,30 +349,6 @@ static bool is_select_apdu(const uint8_t* capdu, DWORD capdu_len,
   return true;
 }
 
-LONG scard_establish_context(
-    DWORD scope, LPCVOID reserved1, LPCVOID reserved2,
-    LPSCARDCONTEXT context_out) __asm__("SCardEstablishContext");
-LONG scard_release_context(SCARDCONTEXT context) __asm__("SCardReleaseContext");
-LONG scard_list_readers(SCARDCONTEXT context, LPCSTR groups, LPSTR readers,
-                        LPDWORD readers_len) __asm__("SCardListReaders");
-LONG scard_get_status_change(
-    SCARDCONTEXT context, DWORD timeout_ms, LPSCARD_READERSTATE reader_states,
-    DWORD readers_count) __asm__("SCardGetStatusChange");
-LONG scard_connect(SCARDCONTEXT context, LPCSTR reader, DWORD share_mode,
-                   DWORD preferred_protocols, LPSCARDHANDLE card_out,
-                   LPDWORD active_protocol_out) __asm__("SCardConnect");
-LONG scard_disconnect(SCARDHANDLE card,
-                      DWORD disposition) __asm__("SCardDisconnect");
-LONG scard_status(SCARDHANDLE card, LPSTR reader_name_out,
-                  LPDWORD reader_name_len_out, LPDWORD state_out,
-                  LPDWORD protocol_out, LPBYTE atr_out,
-                  LPDWORD atr_len_out) __asm__("SCardStatus");
-LONG scard_transmit(SCARDHANDLE card, const SCARD_IO_REQUEST* send_pci,
-                    LPCBYTE send_buffer, DWORD send_length,
-                    LPSCARD_IO_REQUEST recv_pci, LPBYTE recv_buffer,
-                    LPDWORD recv_length) __asm__("SCardTransmit");
-LONG scard_cancel(SCARDCONTEXT context) __asm__("SCardCancel");
-
 LONG scard_establish_context(DWORD scope, LPCVOID reserved1, LPCVOID reserved2,
                              LPSCARDCONTEXT context_out) {
   (void)scope;
@@ -538,8 +514,9 @@ LONG scard_status(SCARDHANDLE card, LPSTR reader_name_out,
   /* pcsc-lite's card-state encoding for a connected card / empty reader;
    * status_specific reports a negotiated protocol (no SCARD_NEGOTIABLE). */
   if (g_mock.card_present_immediately) {
-    *state_out = SCARD_PRESENT | SCARD_POWERED |
-                 (g_mock.status_specific ? SCARD_SPECIFIC : SCARD_NEGOTIABLE);
+    *state_out =
+        (DWORD)SCARD_PRESENT | SCARD_POWERED |
+        (DWORD)(g_mock.status_specific ? SCARD_SPECIFIC : SCARD_NEGOTIABLE);
   } else {
     *state_out = SCARD_ABSENT;
   }

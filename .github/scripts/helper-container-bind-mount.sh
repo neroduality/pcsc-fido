@@ -275,17 +275,11 @@ pcsc_fido_resolve_ci_platform() {
   pcsc_fido_default_ci_platform
 }
 
+# docker/podman run platform args, one per line. Callers: mapfile -t ARR < <(...).
 pcsc_fido_ci_platform_docker_args() {
   local platform
   platform="$(pcsc_fido_resolve_ci_platform)"
   if [[ -n ${platform} ]]; then
     printf '%s\n' "--platform" "${platform}"
   fi
-}
-
-# Populate the PLATFORM_ARGS bash array for docker/podman run.
-pcsc_fido_load_ci_platform_args() {
-  PLATFORM_ARGS=()
-  # shellcheck disable=SC2034 # PLATFORM_ARGS is a return-via-global consumed by callers.
-  mapfile -t PLATFORM_ARGS < <(pcsc_fido_ci_platform_docker_args)
 }

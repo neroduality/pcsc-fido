@@ -29,7 +29,7 @@ enum {
 #include "pcsc_fido/mem_util.h"
 #include "pcsc_fido/pcsc_log.h"
 
-enum {
+enum : unsigned {
   TEST_SCARD_STATE_PRESENT = 0x20u,
   TEST_SCARD_STATE_INUSE = 0x100u,
   TEST_SCARD_STATE_MUTE = 0x200u,

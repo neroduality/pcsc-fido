@@ -30,25 +30,21 @@
 #include "pcsc_fido/pcsc_log.h"
 #include "pcsc_fido/pcsc_util.h"
 #include "scrub_hook.h"
-
-extern uint32_t g_stub_last_error_cid;
-extern uint8_t g_stub_last_error_code;
-extern int g_stub_error_calls;
+#include "linker_wrap.h"
+#include "stub_uhid_transport.h"
 
 enum {
   OTHER_CID = 0x11223344u,
   FAKE_MONOTONIC_START_SEC = 100,
   /* Longer than the reassembly gap, so the gap is what the poll wait uses. */
-  POLL_CAP_LONGER_THAN_REASSEMBLY_MS =
-      PCSC_FIDO_DAEMON_REASSEMBLY_TIMEOUT_MS + PCSC_FIDO_UHID_POLL_TIMEOUT_MS,
+  POLL_CAP_LONGER_THAN_REASSEMBLY_MS = PCSC_FIDO_DAEMON_REASSEMBLY_TIMEOUT_MS +
+      PCSC_FIDO_UHID_POLL_TIMEOUT_MS,
   /* poll(2) infinite wait; the reassembly gap must still bound it. */
   NEGATIVE_POLL_CAP_MS = -1,
 };
 
 static time_t g_fake_monotonic_sec = FAKE_MONOTONIC_START_SEC;
 static bool g_monotonic_fail;
-
-extern int __real_clock_gettime(clockid_t clock_id, struct timespec* ts);
 
 int __wrap_clock_gettime(clockid_t clock_id, struct timespec* ts) {
   if (clock_id != CLOCK_MONOTONIC || ts == PCSC_FIDO_NULL) {
@@ -189,7 +185,8 @@ static void rejects_oversized_expected(void) {
   init[1] = TEST_LIT_0X02U;
   init[TEST_SOCKETPAIR_FDS] = TEST_LIT_0X03U;
   init[TEST_LIT_3] = TEST_LIT_0X04U;
-  init[TEST_LIT_4] = (uint8_t)(TEST_LIT_0X80U | PCSC_FIDO_HID_CMD_PING);
+  init[TEST_LIT_4] =
+      (uint8_t)(PCSC_FIDO_HID_TYPE_INIT | PCSC_FIDO_HID_CMD_PING);
   init[TEST_LIT_5] =
       (uint8_t)(((PCSC_FIDO_CTAPHID_MAX_PAYLOAD + 1u) >> TEST_LIT_8U) &
                 TEST_LIT_0XFFU);
@@ -217,7 +214,8 @@ static void rejects_unframable_expected(void) {
   init[1] = TEST_LIT_0X02U;
   init[TEST_SOCKETPAIR_FDS] = TEST_LIT_0X03U;
   init[TEST_LIT_3] = TEST_LIT_0X04U;
-  init[TEST_LIT_4] = (uint8_t)(TEST_LIT_0X80U | PCSC_FIDO_HID_CMD_CBOR);
+  init[TEST_LIT_4] =
+      (uint8_t)(PCSC_FIDO_HID_TYPE_INIT | PCSC_FIDO_HID_CMD_CBOR);
   init[TEST_LIT_5] = (uint8_t)((unframable >> TEST_LIT_8U) & TEST_LIT_0XFFU);
   init[TEST_LIT_6] = (uint8_t)(unframable & TEST_LIT_0XFFU);
   expect_true(pcsc_fido_daemon_request_assembler_feed(

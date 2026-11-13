@@ -39,7 +39,7 @@ source "${repo_root}/.github/scripts/helper-container-bind-mount.sh"
 export LINT_KIT="${lint_kit}"
 
 if [[ $(id -u) -eq 0 && -n ${HOST_UID:-} && ${PCSC_FIDO_CI_AS_USER:-0} != 1 ]]; then
-  PCSC_FIDO_ALLOW_SUDO_DEPS=1 PCSC_FIDO_DEPS_SCOPE=full \
+  PCSC_FIDO_ALLOW_SUDO_DEPS=1 PCSC_FIDO_DEPS_SCOPE=full PCSC_FIDO_LLVM_PIN=1 \
     bash "${repo_root}/.github/scripts/install-linux-deps.sh"
   pcsc_fido_prepare_bind_mount_paths "${repo_root}"
   pcsc_fido_require_drop_to_host_user bash "${repo_root}/.github/scripts/ci-run-lint.sh"
@@ -57,7 +57,8 @@ if [[ "$(uname -s)" == "Linux" ]]; then
     fi
   fi
   if [[ ${auto_install_linux_deps} != "0" ]]; then
-    PCSC_FIDO_DEPS_SCOPE=full bash "${repo_root}/.github/scripts/install-linux-deps.sh"
+    PCSC_FIDO_DEPS_SCOPE=full PCSC_FIDO_LLVM_PIN=1 \
+      bash "${repo_root}/.github/scripts/install-linux-deps.sh"
   fi
 fi
 

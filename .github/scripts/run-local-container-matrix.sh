@@ -35,7 +35,7 @@ Usage:
 Options:
   --all           Run Debian then Fedora (default)
   --debian-only   debian:trixie-slim only
-  --fedora-only   fedora:38 and fedora:43
+  --fedora-only   fedora:38 and fedora:45
   --skip-openssf  Skip OpenSSF Scorecard after the matrix
   -h, --help      Help
 
@@ -57,7 +57,6 @@ EOF
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 # shellcheck source=helper-container-bind-mount.sh
-# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/helper-container-bind-mount.sh"
 
 RUN_DEBIAN=1
@@ -99,8 +98,7 @@ if ! command -v "${ENGINE}" >/dev/null 2>&1; then
   exit 1
 fi
 
-PLATFORM_ARGS=()
-pcsc_fido_load_ci_platform_args
+mapfile -t PLATFORM_ARGS < <(pcsc_fido_ci_platform_docker_args)
 _resolved_platform="$(pcsc_fido_resolve_ci_platform)"
 case "$(uname -m)" in
   x86_64 | amd64) ;;
@@ -118,7 +116,6 @@ run_in_image() {
   local image="$1"
   local label="$2"
   printf '\n-- %s (%s) --\n' "${label}" "${image}"
-  # shellcheck disable=SC2016
   pcsc_fido_run_bind_mount_container \
     -- \
     "${PLATFORM_ARGS[@]}" \
@@ -141,7 +138,7 @@ run_in_image() {
 
 if [[ ${RUN_DEBIAN} -eq 1 ]]; then
   run_in_image \
-    debian:trixie-slim@sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258 \
+    debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2 \
     "Debian trixie"
 fi
 if [[ ${RUN_FEDORA} -eq 1 ]]; then
@@ -149,8 +146,8 @@ if [[ ${RUN_FEDORA} -eq 1 ]]; then
     fedora:38@sha256:b9ff6f23cceb5bde20bb1f79b492b98d71ef7a7ae518ca1b15b26661a11e6a94 \
     "Fedora 38"
   run_in_image \
-    fedora:43@sha256:a651ddf48ea28a06ed4e1e6519f51c9f47e7a5a138722ade87369b8fbb7e5b42 \
-    "Fedora 43"
+    fedora:45@sha256:a7d72ba2745b100a3351087472e5ee7b2450af7cf331e7673007e3817612839c \
+    "Fedora 45"
 fi
 
 if [[ ${SKIP_OPENSSF} -eq 0 ]]; then

@@ -21,6 +21,7 @@
 #include <stdint.h>
 #include <string.h>
 #include "pcsc_fido/mem_util.h"
+#include "fuzz_target.h"
 
 static void noop_handler(const void* ctx, uint32_t request_cid, uint8_t cmd,
                          const uint8_t* payload, size_t payload_len) {

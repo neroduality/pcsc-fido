@@ -154,7 +154,7 @@ bool pcsc_fido_daemon_request_assembler_feed(
     pending->cid = cid;
     pending->cmd =
         (uint8_t)(packet[PCSC_FIDO_HID_OFF_CMD] & PCSC_FIDO_HID_CMD_MASK);
-    pending->expected = (uint16_t)(((uint16_t)packet[PCSC_FIDO_HID_OFF_BCNTH]
+    pending->expected = (uint16_t)(((unsigned)packet[PCSC_FIDO_HID_OFF_BCNTH]
                                     << PCSC_FIDO_U16_HIGH_BYTE_SHIFT) |
                                    packet[PCSC_FIDO_HID_OFF_BCNTL]);
     if (pending->expected > PCSC_FIDO_CTAPHID_MAX_FRAMED_PAYLOAD) {

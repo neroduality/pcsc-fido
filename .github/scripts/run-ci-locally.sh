@@ -137,13 +137,11 @@ if [[ ${LIMA} -eq 1 && ${PCSC_FIDO_CI_LOCAL_IN_VM:-0} != 1 ]]; then
   exec bash "${SCRIPT_DIR}/run-ci-locally-lima.sh" "$@"
 fi
 # shellcheck source=helper-cross-targets.sh
-# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/helper-cross-targets.sh"
 # shellcheck source=helper-container-bind-mount.sh
-# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/helper-container-bind-mount.sh"
 
-LINT_IMAGE_DEFAULT="debian:sid-slim@sha256:5ac67a4d7c0de96e83873e4dd8f7ea3b507ba292fb2cce60a0c3f73322df5cae"
+LINT_IMAGE_DEFAULT="debian:sid-slim@sha256:07a3205e8583fdff12d2b05bd030f50437e9fd340ee616df0c05dc77af75767b"
 
 resolve_lint_kit_root() {
   local candidate=""
@@ -165,7 +163,6 @@ resolve_lint_kit_root() {
   fi
 
   # shellcheck source=lint-kit-config.sh
-  # shellcheck disable=SC1091
   source "${SCRIPT_DIR}/lint-kit-config.sh"
   lint_kit_ensure_cloned "${REPO_ROOT}"
   candidate="$(lint_kit_root "${REPO_ROOT}")"
@@ -204,7 +201,7 @@ run_lint_container() {
 }
 
 # Same image as the Main CI cbmc job; CBMC comes from the Debian package.
-CBMC_IMAGE_DEFAULT="debian:trixie-slim@sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258"
+CBMC_IMAGE_DEFAULT="debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2"
 
 run_cbmc_container() {
   local engine

@@ -19,8 +19,9 @@
 # through the same release-build-package.sh the Release workflow and
 # `make ci-local CI_LOCAL_FLAGS="--release-arch <host>"` use. Per format this means a
 # fresh build/release-<fmt>-<arch> tree, CMAKE_BUILD_TYPE=Release (LTO, strip, no
-# .comment), ctest, CPack, then verify-glibc-ceiling.sh and
-# verify-release-elf-hardening.sh on the packaged binary. Artifacts land in dist/.
+# .comment), ctest, CPack, then verify-release-elf-hardening.sh on the packaged
+# binary. The glibc ceiling is not applied here; CI and ci-local release
+# containers enforce it. Artifacts land in dist/.
 #
 # Usage: PACKAGE_FORMAT=auto|deb|rpm|both bash make/package-host.sh
 #
@@ -95,7 +96,8 @@ for fmt in "${formats[@]}"; do
     printf -- '-- wiping %s --\n' "${build_dir#"${repo_root}/"}" >&2
     rm -rf "${build_dir}"
   fi
-  AUTO_INSTALL_LINUX_DEPS=0 bash "${scripts_dir}/release-build-package.sh" \
+  PCSC_FIDO_SKIP_GLIBC_CEILING=1 AUTO_INSTALL_LINUX_DEPS=0 \
+    bash "${scripts_dir}/release-build-package.sh" \
     --format "${fmt}" --arch "${arch}" --build-dir "${build_dir}"
   while IFS= read -r artifact; do
     [[ -n ${artifact} ]] || continue

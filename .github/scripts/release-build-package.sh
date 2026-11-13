@@ -220,7 +220,12 @@ if [[ $CROSS -eq 1 ]]; then
   fi
 fi
 
-if [[ $CROSS -eq 1 ]]; then
+# Host `make package` sets PCSC_FIDO_SKIP_GLIBC_CEILING=1. The floor is the
+# release builder's glibc (fedora:38 / debian:trixie), so it is enforced in
+# GitHub Actions and in the ci-local release containers, not on a newer host.
+if [[ ${PCSC_FIDO_SKIP_GLIBC_CEILING:-0} == 1 ]]; then
+  printf -- '-- glibc ceiling: skipped (host package; CI enforces the floor) --\n'
+elif [[ $CROSS -eq 1 ]]; then
   bash "${SCRIPT_DIR}/verify-glibc-ceiling.sh" "${binary}" --format deb
 else
   bash "${SCRIPT_DIR}/verify-glibc-ceiling.sh" "${binary}" --format "${FORMAT}"

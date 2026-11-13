@@ -44,7 +44,7 @@ jobs:
     name: Lint (make lint)
     runs-on: ubuntu-24.04
     container:
-      image: docker.io/library/debian:sid-slim@sha256:5ac67a4d7c0de96e83873e4dd8f7ea3b507ba292fb2cce60a0c3f73322df5cae
+      image: docker.io/library/debian:sid-slim@sha256:07a3205e8583fdff12d2b05bd030f50437e9fd340ee616df0c05dc77af75767b
       options: --platform linux/amd64
     timeout-minutes: 360
 
@@ -103,13 +103,13 @@ jobs:
         include:
           - id: debian-trixie
             name: Debian trixie
-            image: docker.io/library/debian:trixie-slim@sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258
+            image: docker.io/library/debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
           - id: fedora-38
             name: Fedora 38
             image: docker.io/library/fedora:38@sha256:b9ff6f23cceb5bde20bb1f79b492b98d71ef7a7ae518ca1b15b26661a11e6a94
-          - id: fedora-43
-            name: Fedora 43
-            image: docker.io/library/fedora:43@sha256:a651ddf48ea28a06ed4e1e6519f51c9f47e7a5a138722ade87369b8fbb7e5b42
+          - id: fedora-45
+            name: Fedora 45
+            image: docker.io/library/fedora:45@sha256:a7d72ba2745b100a3351087472e5ee7b2450af7cf331e7673007e3817612839c
 
     container:
       image: ${{ matrix.image }}
@@ -182,7 +182,7 @@ jobs:
     needs: [lint]
     runs-on: ubuntu-24.04
     container:
-      image: docker.io/library/debian:trixie-slim@sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258
+      image: docker.io/library/debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
       options: --platform linux/amd64
     timeout-minutes: 30
 

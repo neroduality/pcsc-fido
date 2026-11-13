@@ -60,3 +60,29 @@ unsigned mock_pcsc_get_status_call_count(void);
 PCSC_FIDO_NODISCARD bool mock_pcsc_cancel_during_transmit(void);
 PCSC_FIDO_NODISCARD bool mock_pcsc_wait_for_transmit_waiting(
     unsigned timeout_ms);
+
+// The mock's pcsclite entry points, bound to the real SCard* symbol names so
+// the code under test links against them instead of libpcsclite.
+LONG scard_establish_context(
+    DWORD scope, LPCVOID reserved1, LPCVOID reserved2,
+    LPSCARDCONTEXT context_out) __asm__("SCardEstablishContext");
+LONG scard_release_context(SCARDCONTEXT context) __asm__("SCardReleaseContext");
+LONG scard_list_readers(SCARDCONTEXT context, LPCSTR groups, LPSTR readers,
+                        LPDWORD readers_len) __asm__("SCardListReaders");
+LONG scard_get_status_change(
+    SCARDCONTEXT context, DWORD timeout_ms, LPSCARD_READERSTATE reader_states,
+    DWORD readers_count) __asm__("SCardGetStatusChange");
+LONG scard_connect(SCARDCONTEXT context, LPCSTR reader, DWORD share_mode,
+                   DWORD preferred_protocols, LPSCARDHANDLE card_out,
+                   LPDWORD active_protocol_out) __asm__("SCardConnect");
+LONG scard_disconnect(SCARDHANDLE card,
+                      DWORD disposition) __asm__("SCardDisconnect");
+LONG scard_status(SCARDHANDLE card, LPSTR reader_name_out,
+                  LPDWORD reader_name_len_out, LPDWORD state_out,
+                  LPDWORD protocol_out, LPBYTE atr_out,
+                  LPDWORD atr_len_out) __asm__("SCardStatus");
+LONG scard_transmit(SCARDHANDLE card, const SCARD_IO_REQUEST* send_pci,
+                    LPCBYTE send_buffer, DWORD send_length,
+                    LPSCARD_IO_REQUEST recv_pci, LPBYTE recv_buffer,
+                    LPDWORD recv_length) __asm__("SCardTransmit");
+LONG scard_cancel(SCARDCONTEXT context) __asm__("SCardCancel");

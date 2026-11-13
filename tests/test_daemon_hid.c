@@ -36,7 +36,8 @@ static void packet_cid_and_cancel(void) {
   packet[1] = TEST_LIT_0X02U;
   packet[TEST_SOCKETPAIR_FDS] = TEST_LIT_0X03U;
   packet[TEST_LIT_3] = TEST_LIT_0X04U;
-  packet[TEST_LIT_4] = (uint8_t)(TEST_LIT_0X80U | PCSC_FIDO_HID_CMD_CANCEL);
+  packet[TEST_LIT_4] =
+      (uint8_t)(PCSC_FIDO_HID_TYPE_INIT | PCSC_FIDO_HID_CMD_CANCEL);
   expect_true(pcsc_fido_daemon_hid_packet_cid(packet) == TEST_CID,
               "CID decoded");
   expect_true(pcsc_fido_daemon_hid_is_cancel_packet(packet, TEST_CID),

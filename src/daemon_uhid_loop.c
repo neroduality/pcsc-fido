@@ -174,13 +174,13 @@ int pcsc_fido_daemon_poll_uhid_event(
                                        request_ctx->channels);
     return 0;
   }
-  if (signal_fd >= 0 && (fds[0].revents & POLLIN) != 0) {
+  if (signal_fd >= 0 && ((unsigned)fds[0].revents & POLLIN) != 0) {
     pcsc_fido_daemon_drain_signal_wake();
     if (pcsc_fido_daemon_stop_requested()) {
       return 1;
     }
   }
-  if ((fds[nfds - 1u].revents & POLLIN) != 0) {
+  if (((unsigned)fds[nfds - 1u].revents & POLLIN) != 0) {
     /* The packet may have arrived as the deadline elapsed. Check again
      * before handling it: a rate-limited frame never reaches the assembler,
      * which is the other place a stalled reassembly is expired. */
@@ -191,7 +191,8 @@ int pcsc_fido_daemon_poll_uhid_event(
   /* POLLERR, POLLHUP, or POLLNVAL with nothing to read would otherwise
    * make poll return immediately and spin, leaving the card connected. */
   for (nfds_t i = 0u; i < nfds; i++) {
-    if ((fds[i].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+    if (((unsigned)fds[i].revents & ((unsigned)POLLERR | POLLHUP | POLLNVAL)) !=
+        0) {
       pcsc_fido_log(PCSC_FIDO_LOG_ERROR, "%s", "UHID poll: device closed");
       return -1;
     }

@@ -18,6 +18,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "fuzz_target.h"
 
 static const char CBOR_KEYS[][11] = {"up", "uv", "rk", "clientPin"};
 

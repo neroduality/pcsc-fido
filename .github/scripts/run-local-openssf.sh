@@ -127,8 +127,7 @@ if ! command -v "${ENGINE}" >/dev/null 2>&1; then
   exit 1
 fi
 
-PLATFORM_ARGS=()
-pcsc_fido_load_ci_platform_args
+mapfile -t PLATFORM_ARGS < <(pcsc_fido_ci_platform_docker_args)
 
 SC_ARGS=(--local=/src "--format=${FORMAT}")
 if [[ ${SHOW_DETAILS} -eq 1 ]]; then

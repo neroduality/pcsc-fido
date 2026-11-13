@@ -37,6 +37,7 @@
 #include "pcsc_fido/mem_util.h"
 #include "pcsc_fido/pcsc_fido_io.h"
 #include "pcsc_fido/pcsc_log.h"
+#include "linker_wrap.h"
 
 enum {
   FAKE_UHID_FD = 120,
@@ -56,7 +57,6 @@ enum {
   FRAMING_HEADER_N_BYTE = 0x4Eu,
   FRAMING_HEADER_F_BYTE = 0x46u,
   FRAMING_HEADER_C_BYTE = 0x43u,
-  HID_INIT_PACKET_MARKER = 0x80u,
   BYTE_MASK = 0xFFu,
   TEST_PING_PAYLOAD_BYTE = 0xAAu,
   POLL_FALLBACK_TIMEOUT_MS = 1000,
@@ -82,8 +82,6 @@ static unsigned g_uhid_create_count;
 static unsigned g_uhid_destroy_count;
 static uint8_t g_ping_payload[] = {TEST_PING_PAYLOAD_BYTE};
 
-extern int __real_nanosleep(const struct timespec* req, struct timespec* rem);
-
 // rem matches nanosleep(2); LD --wrap requires a non-const second parameter.
 int __wrap_nanosleep(const struct timespec* req PCSC_FIDO_MAYBE_UNUSED,
                      struct timespec* rem PCSC_FIDO_MAYBE_UNUSED) {
@@ -91,8 +89,6 @@ int __wrap_nanosleep(const struct timespec* req PCSC_FIDO_MAYBE_UNUSED,
   (void)req;
   return __real_nanosleep(&yield, rem);
 }
-
-extern int __real_clock_gettime(clockid_t clock_id, struct timespec* ts);
 
 int __wrap_clock_gettime(clockid_t clock_id, struct timespec* ts) {
   if (clock_id != CLOCK_MONOTONIC || ts == PCSC_FIDO_NULL) {
@@ -103,12 +99,6 @@ int __wrap_clock_gettime(clockid_t clock_id, struct timespec* ts) {
   ts->tv_nsec = 0;
   return 0;
 }
-
-extern int __real_open(const char* pathname, int flags, ...);
-extern ssize_t __real_read(int fd, void* buf, size_t count);
-extern ssize_t __real_write(int fd, const void* buf, size_t count);
-extern int __real_close(int fd);
-extern int __real_poll(struct pollfd* fds, nfds_t nfds, int timeout);
 
 int __wrap_open(const char* pathname, int flags, ...) {
   (void)flags;
@@ -127,7 +117,7 @@ int __wrap_open(const char* pathname, int flags, ...) {
  * --wrap=open like __read_chk does --wrap=read; see tests/fortify_wrap.c.
  * glibc aborts on O_CREAT here because the mode argument is missing. */
 int __wrap___open_2(const char* pathname, int flags) {
-  if ((flags & O_CREAT) != 0) {
+  if (((unsigned)flags & O_CREAT) != 0u) {
     abort();
   }
   return __wrap_open(pathname, flags);
@@ -176,7 +166,7 @@ ssize_t __wrap_read(int fd, void* buf, size_t count) {
       packet[FRAMING_HEADER_C_INDEX] = FRAMING_HEADER_C_BYTE;
       packet[PACKET_CHANNEL_INDEX] = 0x01u;
       packet[PACKET_COMMAND_INDEX] =
-          (uint8_t)(HID_INIT_PACKET_MARKER | PCSC_FIDO_HID_CMD_CBOR);
+          (uint8_t)(PCSC_FIDO_HID_TYPE_INIT | PCSC_FIDO_HID_CMD_CBOR);
       packet[PACKET_BCNT_HIGH_INDEX] = BYTE_MASK;
       packet[PACKET_BCNT_LOW_INDEX] = BYTE_MASK;
     } else {
@@ -185,7 +175,7 @@ ssize_t __wrap_read(int fd, void* buf, size_t count) {
       packet[FRAMING_HEADER_C_INDEX] = FRAMING_HEADER_C_BYTE;
       packet[PACKET_CHANNEL_INDEX] = 0x01u;
       packet[PACKET_COMMAND_INDEX] =
-          (uint8_t)(HID_INIT_PACKET_MARKER | PCSC_FIDO_HID_CMD_PING);
+          (uint8_t)(PCSC_FIDO_HID_TYPE_INIT | PCSC_FIDO_HID_CMD_PING);
       packet[PACKET_LENGTH_INDEX] = (uint8_t)sizeof(g_ping_payload);
       packet[PACKET_PAYLOAD_INDEX] = g_ping_payload[0];
     }
@@ -273,9 +263,9 @@ int __wrap_poll(struct pollfd* fds, nfds_t nfds, int timeout) {
     for (i = 0u; i < nfds; i++) {
       int signal_fd = pcsc_fido_daemon_signal_poll_fd();
       if (signal_fd >= 0 && fds[i].fd == signal_fd &&
-          (fds[i].events & POLLIN) != 0) {
+          ((unsigned)fds[i].events & POLLIN) != 0) {
         int rv = __real_poll(&fds[i], 1, 0);
-        if (rv > 0 && (fds[i].revents & POLLIN) != 0) {
+        if (rv > 0 && ((unsigned)fds[i].revents & POLLIN) != 0) {
           return rv;
         }
       }

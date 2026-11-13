@@ -54,7 +54,7 @@ jobs:
           format: spdx-json
           output-file: sbom.spdx.json
           config: .syft.yaml
-          syft-version: v1.55.0
+          syft-version: v1.57.1
           upload-release-assets: false
           dependency-snapshot: false
           # Uploaded below, after the NTIA step has named the root package.
@@ -80,7 +80,7 @@ jobs:
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
           sbom: sbom.spdx.json
-          grype-version: v0.121.0
+          grype-version: v0.121.3
           fail-build: false
           severity-cutoff: high
           output-format: sarif
@@ -113,7 +113,7 @@ jobs:
           mv "${SARIF_PATH}.patched" "${SARIF_PATH}"
 
       - name: Upload Grype SARIF to code scanning
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         if: success() || failure()
         continue-on-error: true
         with:

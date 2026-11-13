@@ -48,10 +48,10 @@ static bool set_fd_flags(int fd) {
   if (flags < 0 || status < 0) {
     return false;
   }
-  if (fcntl(fd, F_SETFD, flags | FD_CLOEXEC) != 0) {
+  if (fcntl(fd, F_SETFD, (int)((unsigned)flags | FD_CLOEXEC)) != 0) {
     return false;
   }
-  if (fcntl(fd, F_SETFL, status | O_NONBLOCK) != 0) {
+  if (fcntl(fd, F_SETFL, (int)((unsigned)status | O_NONBLOCK)) != 0) {
     return false;
   }
   return true;

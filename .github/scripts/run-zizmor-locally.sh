@@ -46,7 +46,7 @@ Usage:
 Script options (must appear before zizmor flags):
   --container      Always run via Docker/Podman (ignore host zizmor).
   --host           Require host `zizmor` on PATH (fail if missing).
-  --image IMG      Container image (default: digest-pinned ghcr.io/zizmorcore/zizmor:1.31.1).
+  --image IMG      Container image (default: digest-pinned ghcr.io/zizmorcore/zizmor:1.32.0).
   -h, --help       Help.
 
 Environment:
@@ -68,7 +68,7 @@ source "${SCRIPT_DIR}/helper-container-engine.sh"
 
 FORCE_CONTAINER=0
 FORCE_HOST=0
-IMAGE="${ZIZMOR_IMAGE:-ghcr.io/zizmorcore/zizmor:1.31.1@sha256:42d409dbb851d4c5d35a058cf042b828bea1e3f2884378c526eb0974780e18d9}"
+IMAGE="${ZIZMOR_IMAGE:-ghcr.io/zizmorcore/zizmor:1.32.0@sha256:3014cc8f68f663935f69b3c3e0e41f5ce102b268d97db13db0f62208747f860d}"
 ZIZMOR_ARGS=()
 
 while [[ $# -gt 0 ]]; do

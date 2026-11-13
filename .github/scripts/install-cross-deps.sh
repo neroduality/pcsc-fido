@@ -27,7 +27,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=helper-cross-targets.sh
-# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/helper-cross-targets.sh"
 
 if [[ "$(uname -s)" != "Linux" ]]; then
@@ -50,7 +49,7 @@ as_root() {
 
 ARCHES=("$@")
 if [[ ${#ARCHES[@]} -eq 0 ]]; then
-  ARCHES=("${PCSC_FIDO_CROSS_ARCHES[@]}")
+  mapfile -t ARCHES < <(pcsc_fido_cross_arches)
 fi
 
 for arch in "${ARCHES[@]}"; do

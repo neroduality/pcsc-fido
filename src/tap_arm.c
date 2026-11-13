@@ -66,7 +66,7 @@ static bool set_cloexec(int fd) {
   if (flags < 0) {
     return false;
   }
-  return fcntl(fd, F_SETFD, flags | FD_CLOEXEC) == 0;
+  return fcntl(fd, F_SETFD, (int)((unsigned)flags | FD_CLOEXEC)) == 0;
 }
 
 static bool set_nonblock(int fd) {
@@ -74,7 +74,7 @@ static bool set_nonblock(int fd) {
   if (flags < 0) {
     return false;
   }
-  return fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
+  return fcntl(fd, F_SETFL, (int)((unsigned)flags | O_NONBLOCK)) == 0;
 }
 
 static void drain_wake_pipe(int fd) {
@@ -327,8 +327,9 @@ int pcsc_fido_tap_arm_run(int uhid_fd, const pcsc_fido_browser_config_t* cfg) {
       continue;
     }
     for (nfds_t i = 0u; i < nfds; i++) {
-      if ((fds[i].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0 &&
-          (fds[i].revents & POLLIN) == 0) {
+      if (((unsigned)fds[i].revents &
+           ((unsigned)POLLERR | POLLHUP | POLLNVAL)) != 0 &&
+          ((unsigned)fds[i].revents & POLLIN) == 0) {
         if (state.created && fds[i].fd == uhid_fd) {
           pcsc_fido_log(PCSC_FIDO_LOG_ERROR, "%s", "UHID device closed");
           if (!tap_arm_on_timeout(&state)) {
@@ -341,7 +342,7 @@ int pcsc_fido_tap_arm_run(int uhid_fd, const pcsc_fido_browser_config_t* cfg) {
         status = 1;
         goto out;
       }
-      if ((fds[i].revents & POLLIN) == 0) {
+      if (((unsigned)fds[i].revents & POLLIN) == 0) {
         continue;
       }
       if (signal_fd >= 0 && fds[i].fd == signal_fd) {

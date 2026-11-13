@@ -16,7 +16,7 @@
 
 #include "test_caps.h"
 
-enum {
+enum : unsigned {
   TEST_CAP_240 = 240,
   TEST_CAP_260 = 260,
   TEST_CAP_280 = 280,
@@ -81,6 +81,7 @@ enum {
 #include "pcsc_fido/pcsc_bridge_limits.h"
 #include "pcsc_fido/pcsc_log.h"
 #include "scrub_hook.h"
+#include "linker_wrap.h"
 
 static time_t g_fake_time = FAKE_TIME_START;
 
@@ -89,8 +90,6 @@ int __wrap_nanosleep(const struct timespec* req PCSC_FIDO_MAYBE_UNUSED,
                      struct timespec* rem PCSC_FIDO_MAYBE_UNUSED) {
   return 0;
 }
-
-extern int __real_clock_gettime(clockid_t clock_id, struct timespec* ts);
 
 int __wrap_clock_gettime(clockid_t clock_id, struct timespec* ts) {
   if (clock_id != CLOCK_MONOTONIC || ts == PCSC_FIDO_NULL) {

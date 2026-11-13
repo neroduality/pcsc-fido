@@ -21,20 +21,21 @@ set -euo pipefail
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 build_dir="${repo_root}/build/scan"
 report_dir="${repo_root}/scan-build-report"
+# shellcheck source=llvm-version.sh
+source "${repo_root}/.github/scripts/llvm-version.sh"
 
 resolve_scan_build() {
-  local c v p
+  local p
+  local -a names=()
   if command -v scan-build >/dev/null 2>&1; then
     printf '%s' "scan-build"
     return 0
   fi
-  for v in 21 20 19 18 17 16 15 14; do
-    c="scan-build-${v}"
-    if command -v "$c" >/dev/null 2>&1; then
-      printf '%s' "$c"
-      return 0
-    fi
-  done
+  mapfile -t names < <(pcsc_fido_llvm_versioned_tools scan-build)
+  if ((${#names[@]} > 0)); then
+    printf '%s' "${names[0]}"
+    return 0
+  fi
   for p in /usr/lib64/llvm*/bin/scan-build /usr/lib/llvm*/bin/scan-build; do
     if [[ -x ${p} ]]; then
       printf '%s' "${p}"
@@ -47,6 +48,7 @@ resolve_scan_build() {
 # Prefer clang beside scan-build, then clang-NN / llvm-NN (Debian may omit bare clang).
 resolve_analyzer_cc() {
   local sb dir base ver p resolved_sb
+  local -a names=()
   sb="$(command -v "$1" 2>/dev/null || true)"
   if [[ -n ${sb} ]]; then
     dir="$(dirname -- "$(readlink -f -- "${sb}")")"
@@ -90,12 +92,11 @@ resolve_analyzer_cc() {
       return 0
     fi
   done
-  for ver in 21 20 19 18 17 16 15 14; do
-    if command -v "clang-${ver}" >/dev/null 2>&1; then
-      command -v "clang-${ver}"
-      return 0
-    fi
-  done
+  mapfile -t names < <(pcsc_fido_llvm_versioned_tools clang)
+  if ((${#names[@]} > 0)); then
+    command -v "${names[0]}"
+    return 0
+  fi
   return 1
 }
 

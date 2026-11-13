@@ -133,7 +133,7 @@ static exchange_abort_t drain_exchange_events(
     /* Read a last event if one is waiting, then a later pass sees the
      * hangup on its own and aborts. An empty or short read has consumed
      * the stream, so it cannot be parsed again. */
-    if ((pfd.revents & POLLIN) != 0) {
+    if (((unsigned)pfd.revents & POLLIN) != 0) {
       const ssize_t got = read(fd, &ev, sizeof(ev));
       if (got < 0) {
         if (errno == EINTR) {
@@ -149,7 +149,8 @@ static exchange_abort_t drain_exchange_events(
       if (got != (ssize_t)sizeof(ev)) {
         return PCSC_FIDO_EXCHANGE_CLIENT_CLOSED;
       }
-    } else if ((pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+    } else if (((unsigned)pfd.revents &
+                ((unsigned)POLLERR | POLLHUP | POLLNVAL)) != 0) {
       return PCSC_FIDO_EXCHANGE_CLIENT_CLOSED;
     } else {
       return strongest;
@@ -194,7 +195,7 @@ static void wait_keepalive_interval(void) {
     do {
       rv = poll(&pfd, 1u, timeout_ms);
     } while (rv < 0 && errno == EINTR && !pcsc_fido_daemon_stop_requested());
-    if (rv > 0 && (pfd.revents & POLLIN) != 0) {
+    if (rv > 0 && ((unsigned)pfd.revents & POLLIN) != 0) {
       pcsc_fido_daemon_drain_signal_wake();
     }
     return;

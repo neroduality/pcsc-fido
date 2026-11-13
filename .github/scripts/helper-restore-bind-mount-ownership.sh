@@ -35,8 +35,7 @@ if ! command -v "${ENGINE}" >/dev/null 2>&1; then
   exit 1
 fi
 
-PLATFORM_ARGS=()
-pcsc_fido_load_ci_platform_args
+mapfile -t PLATFORM_ARGS < <(pcsc_fido_ci_platform_docker_args)
 
 HOST_UID="${HOST_UID:-$(id -u)}"
 HOST_GID="${HOST_GID:-$(id -g)}"
@@ -77,7 +76,7 @@ if ! "${ENGINE}" run --rm \
   -v "${REPO_ROOT}:/src" \
   -u 0 \
   --entrypoint chown \
-  docker.io/library/alpine:3.24.3@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a \
+  docker.io/library/alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf \
   -R "${HOST_UID}:${HOST_GID}" \
   "${mount_targets[@]}" 2>/dev/null; then
   if ! restore_with_host_chown; then

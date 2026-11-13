@@ -88,7 +88,7 @@ sudo apt-get update
 sudo apt-get install -y cmake gcc make pkg-config pcscd libpcsclite-dev libccid pcsc-tools systemd udev libasan8 libubsan1 libtsan2 valgrind
 ```
 
-These cover `make`, `make test`, and `make verify`. `make lint` also needs clang-format, clang-tidy, cppcheck, shellcheck, codespell, yamllint, shfmt, Node.js, and PyYAML. `make deps` installs everything; `INSTALL_DEPS=1 make <target>` installs only what that target needs. Plain `make` never installs packages. `make help` lists all targets.
+These cover `make`, `make test`, and `make verify`. `make lint` also needs clang-format 23, clang-tidy 23, cppcheck, shellcheck, codespell, yamllint, shfmt, Node.js, and PyYAML. `make deps` installs everything, with whatever LLVM version your distro ships; `make deps PCSC_FIDO_LLVM_PIN=1` installs LLVM 23 for `make lint`; `INSTALL_DEPS=1 make <target>` installs only what that target needs. Plain `make` never installs packages. `make help` lists all targets.
 
 Build, test, install:
 
@@ -166,4 +166,4 @@ make ci-local CI_LOCAL_FLAGS="--release-arch riscv64"   # one arch
 bash .github/scripts/run-local-release-packages.sh --all
 ```
 
-`make package` runs the same build, `ctest`, and glibc/ELF checks as `--release-arch`, without a container.
+`make package` runs the same build, `ctest`, and ELF checks as `--release-arch`, without a container. The glibc ceiling is enforced in CI and in `make ci-local` release containers, not by a host `make package`.

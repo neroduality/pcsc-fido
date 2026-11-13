@@ -58,7 +58,6 @@ _lima_lint_kit_set() {
 _lima_resolve_host_lint_kit() {
   local candidate=""
   # shellcheck source=lint-kit-config.sh
-  # shellcheck disable=SC1091
   source "${SCRIPT_DIR}/lint-kit-config.sh"
   if [[ -n ${LINT_KIT:-} ]]; then
     candidate="$(cd -- "${LINT_KIT}" && pwd)" || {
@@ -175,7 +174,6 @@ _lima_print_failure_diagnostics() {
     ci)
       printf -- '-- hint: CI error output should appear above this block --\n' >&2
       if _lima_instance_exists; then
-        # shellcheck disable=SC2016
         limactl shell "${INSTANCE}" -- env LINT_KIT="${LIMA_GUEST_LINT_KIT}" bash -ce '
           printf "user=%s\n" "$(id -un)"
           printf "lint_kit=%s\n" "${LINT_KIT:-unset}"

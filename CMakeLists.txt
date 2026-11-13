@@ -235,8 +235,9 @@ elseif(PCSC_FIDO_ENABLE_COVERAGE)
   if(NOT CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     message(FATAL_ERROR "Coverage builds require GCC or Clang")
   endif()
-  add_compile_options(--coverage)
-  add_link_options(--coverage)
+  # Threaded tests race on non-atomic gcov counters, yielding negative line counts in lcov.
+  add_compile_options(--coverage -fprofile-update=atomic)
+  add_link_options(--coverage -fprofile-update=atomic)
 elseif(_pcsc_fido_ipo_ok)
   set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
   set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO ON)
@@ -364,9 +365,10 @@ if(BUILD_TESTING)
   set(PCSC_FIDO_TESTS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tests")
   # Same sources and flags as pcsc_fido_core plus the test-only hooks; every
   # unit test links this archive, the daemon never does. The test headers
-  # (scrub_hook.h, mock_pcsc.h, test_caps.h) reach the tests through its
-  # interface rather than a directory-wide include_directories(), which would
-  # also apply to pcsc_fido_core and pcsc-fido.
+  # (scrub_hook.h, mock_pcsc.h, test_caps.h, linker_wrap.h,
+  # stub_uhid_transport.h) reach the tests through its interface rather than a
+  # directory-wide include_directories(), which would also apply to
+  # pcsc_fido_core and pcsc-fido.
   add_library(pcsc_fido_core_testing STATIC ${PCSC_FIDO_CORE_SOURCES})
   target_include_directories(pcsc_fido_core_testing PUBLIC
     include
@@ -527,6 +529,8 @@ if(BUILD_TESTING)
     "-Wl,--wrap=clock_gettime" "-Wl,--wrap=pthread_create")
   pcsc_fido_enable_scrub_hook(test_daemon_request_handler)
   add_test(NAME daemon_request_handler COMMAND test_daemon_request_handler)
+  # Each wait inside the test is bounded; this caps the binary as a whole.
+  set_tests_properties(daemon_request_handler PROPERTIES TIMEOUT 300)
 
   add_executable(test_browser_daemon_cli tests/test_browser_daemon_cli.c tests/mock_pcsc.c
     src/browser_daemon.c src/card_monitor.c src/daemon_request_handler.c src/exchange_orchestrator.c

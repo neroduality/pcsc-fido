@@ -178,8 +178,7 @@ pcsc_fido_record_release_artifact() {
   done
 }
 
-PLATFORM_ARGS=()
-pcsc_fido_load_ci_platform_args
+mapfile -t PLATFORM_ARGS < <(pcsc_fido_ci_platform_docker_args)
 
 chown_outputs() {
   pcsc_fido_restore_bind_mount_ownership build dist
@@ -227,7 +226,6 @@ run_native_package() {
   fresh_release_build_dir "${fmt}" "${arch}"
   dist_before="$(mktemp)"
   find "${REPO_ROOT}/dist" -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' \) -printf '%f\n' 2>/dev/null | sort >"${dist_before}" || true
-  # shellcheck disable=SC2016
   pcsc_fido_run_bind_mount_container \
     --restore build dist -- \
     "${PLATFORM_ARGS[@]}" \
@@ -265,7 +263,6 @@ run_cross_package() {
   fresh_release_build_dir "${fmt}" "${arch}"
   dist_before="$(mktemp)"
   find "${REPO_ROOT}/dist" -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' \) -printf '%f\n' 2>/dev/null | sort >"${dist_before}" || true
-  # shellcheck disable=SC2016
   pcsc_fido_run_bind_mount_container \
     --restore build dist -- \
     "${PLATFORM_ARGS[@]}" \
@@ -348,6 +345,7 @@ case "${MODE}" in
     ;;
 esac
 
+mapfile -t CROSS_ARCHES < <(pcsc_fido_cross_arches)
 case "${MODE}" in
   quick)
     release_step_begin "native ${NATIVE_ARCH} deb"
@@ -360,13 +358,13 @@ case "${MODE}" in
     run_formats run_cross_package_wrapped "${CROSS_ARCH}"
     ;;
   all-cross)
-    for arch in "${PCSC_FIDO_CROSS_ARCHES[@]}"; do
+    for arch in "${CROSS_ARCHES[@]}"; do
       run_formats run_cross_package_wrapped "${arch}"
     done
     ;;
   all)
     run_formats run_native_package_wrapped "${NATIVE_ARCH}"
-    for arch in "${PCSC_FIDO_CROSS_ARCHES[@]}"; do
+    for arch in "${CROSS_ARCHES[@]}"; do
       run_formats run_cross_package_wrapped "${arch}"
     done
     ;;

@@ -102,11 +102,9 @@ EOF
   repo_root="$(cd -- "$linter_dir/../.." && pwd)"
 
   # License HTML blocks and fenced code (inline `code` stays checked -- usually prose).
-  # shellcheck disable=SC2016
   local IGNORE_MULTILINE_REGEX='(?s)<!--.*?-->|\`\`\`.*?(\`\`\`|$)'
 
   # URLs, hex, email-ish tokens, long uppercase acronyms, snake_case identifiers.
-  # shellcheck disable=SC2016
   local IGNORE_REGEX='(\bhttps?://\S+\b|\b0x[0-9A-Fa-f]+\b|\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b|\b[A-Z][A-Z0-9_]{2,}\b|\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b)'
 
   local SKIP_GLOBS='*.png,*.jpg,*.jpeg,*.gif,*.webp,*.svg,*.ico,*.bin,*.hex,*.pdf,build,build-*,dist,third-party,_deps,node_modules,.git'

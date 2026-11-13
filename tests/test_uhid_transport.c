@@ -40,12 +40,11 @@ enum {
 #include "pcsc_fido/mem_util.h"
 #include "pcsc_fido/pcsc_log.h"
 #include "scrub_hook.h"
+#include "linker_wrap.h"
 
 static int failures;
 static unsigned g_eintr_writes_remaining;
 static bool g_short_writes_enabled;
-
-extern ssize_t __real_write(int fd, const void* buf, size_t count);
 
 ssize_t __wrap_write(int fd, const void* buf, size_t count) {
   if (g_eintr_writes_remaining > 0u) {

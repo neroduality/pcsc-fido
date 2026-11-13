@@ -15,6 +15,10 @@
 # limitations under the License.
 #
 # Consumer lint manifest for the org kit (pcsc-fido -- userspace-only daemon).
+#
+# toolchain.llvm_major pins clang-format and clang-tidy for make lint and CI.
+# clang-format majors wrap enumerator initializers differently, so one major
+# keeps the format gate stable across machines. Every other target uses any LLVM.
 
 compile_db:
   firmware: null
@@ -72,7 +76,6 @@ policy:
     - daemon_config.h
     - daemon_rate_limit.h
     - pcsc_bridge_limits.h
-  nolint_allowed: null
   overrides:
     clang-format:
       add: null
@@ -145,8 +148,9 @@ spec_traceability:
 toolchain:
   lint_kit:
     path: lint-c-cpp
-    ref: v0.4.0
+    ref: v0.5.0
     repository: neroduality/.github
+  llvm_major: 23
   script: null
 
 workflow:

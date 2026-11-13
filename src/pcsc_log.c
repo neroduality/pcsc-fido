@@ -21,6 +21,9 @@
 #include <stdarg.h>
 #include <stdio.h>
 
+static void pcsc_fido_vlog(const char* fmt, va_list args)
+    __attribute__((format(printf, 1, 0)));
+
 static void pcsc_fido_vlog(const char* fmt, va_list args) {
   pcsc_fido_io_fputs(stderr, "pcsc-fido: ");
   pcsc_fido_io_vprintf(stderr, fmt, args);
@@ -34,14 +37,10 @@ void pcsc_fido_log(pcsc_fido_log_level_t level, const char* fmt, ...) {
   if (level == PCSC_FIDO_LOG_DEBUG && !pcsc_fido_bridge_debug_enabled()) {
     return;
   }
-#ifndef __clang_analyzer__
   {
     va_list args;
     va_start(args, fmt);
     pcsc_fido_vlog(fmt, args);
     va_end(args);
   }
-#else
-  (void)pcsc_fido_vlog;
-#endif
 }

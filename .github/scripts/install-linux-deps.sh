@@ -28,6 +28,9 @@
 #     package -- build + native CPack tools (make package / release-build-package.sh)
 #     verify  -- build + sanitizer runtime + valgrind (make verify/valgrind)
 #     full    -- lint/CI toolchain (default when unset; make lint/deps)
+#   PCSC_FIDO_LLVM_PIN=1        install exactly the toolchain.llvm_major LLVM (lint-c-cpp.yaml) for
+#                               clang-format and clang-tidy (make lint, CI lint). Unset: distro
+#                               LLVM, any version.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -41,6 +44,8 @@ source "${SCRIPT_DIR}/../linters/helper-markdownlint.sh"
 source "${SCRIPT_DIR}/helper-container-bind-mount.sh"
 # shellcheck source=helper-fuzz-probe.sh
 source "${SCRIPT_DIR}/helper-fuzz-probe.sh"
+# shellcheck source=llvm-version.sh
+source "${SCRIPT_DIR}/llvm-version.sh"
 
 if [[ "$(uname -s)" != "Linux" ]]; then
   echo "-- install-linux-deps: not Linux; skipping --" >&2
@@ -56,10 +61,7 @@ fi
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
-PCSC_FIDO_CLANG_TIDY_MIN_VERSION="${PCSC_FIDO_CLANG_TIDY_MIN_VERSION:-21.0.0}"
-PCSC_FIDO_CLANG_FORMAT_MIN_VERSION="${PCSC_FIDO_CLANG_FORMAT_MIN_VERSION:-20.0.0}"
-PCSC_FIDO_LLVM_PREFERRED_MAJOR="${PCSC_FIDO_LLVM_PREFERRED_MAJOR:-21}"
-PCSC_FIDO_MARKDOWNLINT_MIN_VERSION="${PCSC_FIDO_MARKDOWNLINT_MIN_VERSION:-0.48.0}"
+PCSC_FIDO_MARKDOWNLINT_MIN_VERSION="${PCSC_FIDO_MARKDOWNLINT_MIN_VERSION:-0.50.0}"
 
 pcsc_fido_deps_scope() {
   case "${PCSC_FIDO_DEPS_SCOPE:-full}" in
@@ -100,12 +102,10 @@ pcsc_fido_verify_tools_ok() {
   pcsc_fido_build_tools_ok && have valgrind
 }
 
+# Presence only: ci-scan-build.sh resolves the binary and any LLVM version works.
 scan_build_ok() {
-  local v p
-  if have scan-build; then return 0; fi
-  for v in 21 20 19 18 17 16 15 14; do
-    have "scan-build-${v}" && return 0
-  done
+  local p
+  pcsc_fido_find_llvm_tool scan-build >/dev/null && return 0
   for p in /usr/lib64/llvm*/bin/scan-build /usr/lib/llvm*/bin/scan-build; do
     [[ -x ${p} ]] && return 0
   done
@@ -116,7 +116,7 @@ pcsc_fido_host_tools_ok() {
   have cmake && have gcc && have make && have pkg-config && pkg-config --exists libpcsclite &&
     have valgrind && pcsc_fido_ensure_clang_tidy && pcsc_fido_ensure_clang_format &&
     have cppcheck && have shellcheck && have codespell && have python3 &&
-    pcsc_fido_ensure_scan_build
+    scan_build_ok
 }
 
 as_root() {
@@ -130,6 +130,76 @@ as_root() {
     printf '      or:   make deps PCSC_FIDO_ALLOW_SUDO_DEPS=1\n' >&2
     return 1
   fi
+}
+
+# Fedora/RHEL do not package shfmt; apt does. Fall back to the upstream release binary.
+# Bump the version and both sha256 values in install_shfmt together.
+PCSC_FIDO_SHFMT_RELEASE_VERSION=3.14.1
+
+install_shfmt() {
+  if have shfmt; then
+    return 0
+  fi
+  if ! have curl && ! have wget; then
+    printf 'warning: need curl or wget to install shfmt\n' >&2
+    return 1
+  fi
+  if ! have sha256sum; then
+    printf 'warning: need sha256sum to verify shfmt\n' >&2
+    return 1
+  fi
+  local arch sha256 install_dir ver url dest tmp
+  case "$(uname -m)" in
+    x86_64 | amd64)
+      arch=amd64
+      sha256=76e77641faa025814b77f153b29796b8e6fa2fca03e0c76a691608b86c7ea7bf
+      ;;
+    aarch64 | arm64)
+      arch=arm64
+      sha256=5f2db09dae91fca848f7adbdd014632e921a383863a2ad7e0450ad3aba0c6489
+      ;;
+    *)
+      printf 'warning: unsupported arch for shfmt binary: %s\n' "$(uname -m)" >&2
+      return 1
+      ;;
+  esac
+  if [[ ${EUID} -eq 0 ]]; then
+    install_dir=/usr/local/bin
+  else
+    install_dir="${HOME}/.local/bin"
+    mkdir -p "${install_dir}"
+  fi
+  ver="${PCSC_FIDO_SHFMT_RELEASE_VERSION}"
+  url="https://github.com/mvdan/sh/releases/download/v${ver}/shfmt_v${ver}_linux_${arch}"
+  dest="${install_dir}/shfmt"
+  tmp="$(mktemp "${install_dir}/.shfmt.XXXXXX")" || return 1
+  printf -- '-- install shfmt v%s -> %s --\n' "${ver}" "${dest}" >&2
+  if have curl; then
+    curl -fsSL -o "${tmp}" "${url}" || {
+      rm -f "${tmp}"
+      return 1
+    }
+  else
+    wget -q -O "${tmp}" "${url}" || {
+      rm -f "${tmp}"
+      return 1
+    }
+  fi
+  if ! printf '%s  %s\n' "${sha256}" "${tmp}" | sha256sum -c --status -; then
+    printf 'error: shfmt v%s checksum mismatch (%s)\n' "${ver}" "${url}" >&2
+    rm -f "${tmp}"
+    return 1
+  fi
+  chmod +x "${tmp}"
+  mv -f "${tmp}" "${dest}"
+  case ":${PATH}:" in
+    *":${install_dir}:"*) : ;;
+    *)
+      PATH="${install_dir}:${PATH}"
+      export PATH
+      ;;
+  esac
+  have shfmt
 }
 
 # Debian clang-tools ships scan-build and clang-N. llvm-ar-N and llvm-ranlib-N
@@ -191,23 +261,23 @@ pcsc_fido_clang_tidy_version_raw() {
     head -n1
 }
 
-pcsc_fido_find_clang_tidy() {
-  local name candidate ver best="" best_ver=""
-  for name in \
-    "clang-tidy-${PCSC_FIDO_LLVM_PREFERRED_MAJOR}" \
-    clang-tidy-21 clang-tidy-20 clang-tidy-19 clang-tidy-18 clang-tidy; do
-    candidate="$(command -v "${name}" 2>/dev/null)" || continue
-    [[ -x ${candidate} ]] || continue
-    ver="$(pcsc_fido_clang_tidy_version_raw "${candidate}")" || continue
-    pcsc_fido_version_ge "${PCSC_FIDO_CLANG_TIDY_MIN_VERSION}" "${ver}" || continue
-    if [[ -z ${best_ver} ]] ||
-      [[ "$(printf '%s\n%s\n' "${best_ver}" "${ver}" | sort -V | tail -n1)" == "${ver}" ]]; then
-      best="${candidate}"
-      best_ver="${ver}"
-    fi
+# Newest NAME-<major> on PATH, else bare NAME. Any version is accepted.
+pcsc_fido_find_llvm_tool() {
+  local name="${1:?}" candidate
+  local -a names=()
+  mapfile -t names < <(pcsc_fido_llvm_versioned_tools "${name}")
+  for candidate in "${names[@]}" "${name}"; do
+    command -v "${candidate}" 2>/dev/null && return 0
   done
-  [[ -n ${best} ]] || return 1
-  printf '%s\n' "${best}"
+  return 1
+}
+
+pcsc_fido_find_clang_tidy() {
+  if [[ ${PCSC_FIDO_LLVM_PIN} == 1 ]]; then
+    pcsc_fido_find_pinned_llvm_tool clang-tidy
+  else
+    pcsc_fido_find_llvm_tool clang-tidy
+  fi
 }
 
 pcsc_fido_find_run_clang_tidy() {
@@ -250,8 +320,6 @@ pcsc_fido_ensure_clang_tidy() {
   fi
 
   pcsc_fido_export_tool_shim_dir "${install_dir}"
-  pcsc_fido_version_ge "${PCSC_FIDO_CLANG_TIDY_MIN_VERSION}" \
-    "$(pcsc_fido_clang_tidy_version_raw)"
 }
 
 pcsc_fido_clang_format_version_raw() {
@@ -269,22 +337,11 @@ pcsc_fido_clang_format_version_raw() {
 }
 
 pcsc_fido_find_clang_format() {
-  local name candidate ver best="" best_ver=""
-  for name in \
-    "clang-format-${PCSC_FIDO_LLVM_PREFERRED_MAJOR}" \
-    clang-format-21 clang-format-20 clang-format; do
-    candidate="$(command -v "${name}" 2>/dev/null)" || continue
-    [[ -x ${candidate} ]] || continue
-    ver="$(pcsc_fido_clang_format_version_raw "${candidate}")" || continue
-    pcsc_fido_version_ge "${PCSC_FIDO_CLANG_FORMAT_MIN_VERSION}" "${ver}" || continue
-    if [[ -z ${best_ver} ]] ||
-      [[ "$(printf '%s\n%s\n' "${best_ver}" "${ver}" | sort -V | tail -n1)" == "${ver}" ]]; then
-      best="${candidate}"
-      best_ver="${ver}"
-    fi
-  done
-  [[ -n ${best} ]] || return 1
-  printf '%s\n' "${best}"
+  if [[ ${PCSC_FIDO_LLVM_PIN} == 1 ]]; then
+    pcsc_fido_find_pinned_llvm_tool clang-format
+  else
+    pcsc_fido_find_llvm_tool clang-format
+  fi
 }
 
 pcsc_fido_ensure_clang_format() {
@@ -297,69 +354,12 @@ pcsc_fido_ensure_clang_format() {
     ln -sf "${format_bin}" "${install_dir}/clang-format"
 
   pcsc_fido_export_tool_shim_dir "${install_dir}"
-  pcsc_fido_version_ge "${PCSC_FIDO_CLANG_FORMAT_MIN_VERSION}" \
-    "$(pcsc_fido_clang_format_version_raw)"
-}
-
-pcsc_fido_scan_build_version_raw() {
-  local bin="${1:?}"
-  local ver base
-  [[ -x ${bin} ]] || return 1
-  ver="$("${bin}" --version 2>/dev/null |
-    sed -n \
-      -e 's/.*LLVM version \([0-9][0-9.]*\).*/\1/p' \
-      -e 's/.*scan-build version \([0-9][0-9.]*\).*/\1/p' |
-    head -n1)"
-  if [[ -n ${ver} ]]; then
-    printf '%s\n' "${ver}"
-    return 0
-  fi
-  base="$(basename "${bin}")"
-  if [[ ${base} =~ ^scan-build-([0-9]+)$ ]]; then
-    printf '%s.0.0\n' "${BASH_REMATCH[1]}"
-    return 0
-  fi
-  return 1
-}
-
-pcsc_fido_find_scan_build() {
-  local name candidate ver best="" best_ver=""
-  for name in \
-    "scan-build-${PCSC_FIDO_LLVM_PREFERRED_MAJOR}" \
-    scan-build-21 scan-build-20 scan-build-19 scan-build-18; do
-    candidate="$(command -v "${name}" 2>/dev/null)" || continue
-    [[ -x ${candidate} ]] || continue
-    ver="$(pcsc_fido_scan_build_version_raw "${candidate}")" || continue
-    pcsc_fido_version_ge "${PCSC_FIDO_CLANG_TIDY_MIN_VERSION}" "${ver}" || continue
-    if [[ -z ${best_ver} ]] ||
-      [[ "$(printf '%s\n%s\n' "${best_ver}" "${ver}" | sort -V | tail -n1)" == "${ver}" ]]; then
-      best="${candidate}"
-      best_ver="${ver}"
-    fi
-  done
-  [[ -n ${best} ]] || return 1
-  printf '%s\n' "${best}"
-}
-
-pcsc_fido_ensure_scan_build() {
-  local scan_bin install_dir ver
-  scan_bin="$(pcsc_fido_find_scan_build)" || return 1
-  ver="$(pcsc_fido_scan_build_version_raw "${scan_bin}")" || return 1
-
-  install_dir="$(pcsc_fido_lint_tool_install_dir)"
-  mkdir -p "${install_dir}"
-  [[ ${scan_bin} == "${install_dir}/scan-build" ]] ||
-    ln -sf "${scan_bin}" "${install_dir}/scan-build"
-
-  pcsc_fido_export_tool_shim_dir "${install_dir}"
-  pcsc_fido_version_ge "${PCSC_FIDO_CLANG_TIDY_MIN_VERSION}" "${ver}"
 }
 
 pcsc_fido_install_llvm_tool_shims() {
-  printf -- '-- LLVM tool shims (clang-tidy/clang-format/scan-build/run-clang-tidy) --\n' >&2
+  printf -- '-- LLVM tool shims (clang-tidy/clang-format/run-clang-tidy) --\n' >&2
   pcsc_fido_ensure_clang_tidy &&
-    pcsc_fido_ensure_clang_format &&
-    pcsc_fido_ensure_scan_build
+    pcsc_fido_ensure_clang_format
 }
 
 pcsc_fido_apt_pkg_installable() {
@@ -373,7 +373,6 @@ pcsc_fido_apt_pkg_installable() {
 
 pcsc_fido_apt_codename() {
   if [[ -f /etc/os-release ]]; then
-    # shellcheck disable=SC1091
     . /etc/os-release
     if [[ -n ${VERSION_CODENAME:-} ]]; then
       printf '%s\n' "${VERSION_CODENAME}"
@@ -454,7 +453,7 @@ pcsc_fido_install_llvm_apt_repo() {
 }
 
 pcsc_fido_install_clang_tidy_via_distro() {
-  local ver="${PCSC_FIDO_LLVM_PREFERRED_MAJOR}"
+  local ver="${PCSC_FIDO_LLVM_MAJOR}"
   if ! pcsc_fido_apt_pkg_installable "clang-tidy-${ver}" "clang-tools-${ver}"; then
     return 1
   fi
@@ -463,27 +462,23 @@ pcsc_fido_install_clang_tidy_via_distro() {
 }
 
 pcsc_fido_install_clang_tidy_via_llvm_apt() {
-  local ver="${PCSC_FIDO_LLVM_PREFERRED_MAJOR}"
+  local ver="${PCSC_FIDO_LLVM_MAJOR}"
   pcsc_fido_install_llvm_apt_repo "${ver}" || return 1
   printf -- '-- apt-get: clang-tidy-%s + clang-tools-%s (apt.llvm.org) --\n' "${ver}" "${ver}" >&2
   as_root apt-get install -y --no-install-recommends "clang-tidy-${ver}" "clang-tools-${ver}"
 }
 
 pcsc_fido_install_clang_format_via_distro() {
-  local ver
-  for ver in "${PCSC_FIDO_LLVM_PREFERRED_MAJOR}" 20; do
-    if ! pcsc_fido_apt_pkg_installable "clang-format-${ver}"; then
-      continue
-    fi
-    printf -- '-- apt-get: clang-format-%s --\n' "${ver}" >&2
-    as_root apt-get install -y --no-install-recommends "clang-format-${ver}"
-    return 0
-  done
-  return 1
+  local ver="${PCSC_FIDO_LLVM_MAJOR}"
+  if ! pcsc_fido_apt_pkg_installable "clang-format-${ver}"; then
+    return 1
+  fi
+  printf -- '-- apt-get: clang-format-%s --\n' "${ver}" >&2
+  as_root apt-get install -y --no-install-recommends "clang-format-${ver}"
 }
 
 pcsc_fido_install_clang_format_via_llvm_apt() {
-  local ver="${PCSC_FIDO_LLVM_PREFERRED_MAJOR}"
+  local ver="${PCSC_FIDO_LLVM_MAJOR}"
   pcsc_fido_install_llvm_apt_repo "${ver}" || return 1
   if ! pcsc_fido_apt_pkg_installable "clang-format-${ver}"; then
     return 1
@@ -496,7 +491,9 @@ install_clang_tidy() {
   if pcsc_fido_ensure_clang_tidy; then
     return 0
   fi
-  if have apt-get; then
+  if have apt-get && [[ ${PCSC_FIDO_LLVM_PIN} != 1 ]]; then
+    as_root apt-get install -y --no-install-recommends clang-tidy || return 1
+  elif have apt-get; then
     pcsc_fido_install_clang_tidy_via_distro || true
     if pcsc_fido_ensure_clang_tidy; then
       return 0
@@ -508,12 +505,12 @@ install_clang_tidy() {
   if pcsc_fido_ensure_clang_tidy; then
     return 0
   fi
-  if ! have clang-tidy; then
-    printf 'warning: clang-tidy not installed\n' >&2
-  else
-    printf 'warning: clang-tidy >= %s required; found %s\n' \
-      "${PCSC_FIDO_CLANG_TIDY_MIN_VERSION}" \
+  if [[ ${PCSC_FIDO_LLVM_PIN} == 1 ]] && have clang-tidy; then
+    printf 'warning: clang-tidy %s required; found %s\n' \
+      "${PCSC_FIDO_LLVM_MAJOR}" \
       "$(pcsc_fido_clang_tidy_version_raw 2>/dev/null || echo unknown)" >&2
+  else
+    printf 'warning: clang-tidy not installed\n' >&2
   fi
   return 1
 }
@@ -522,7 +519,9 @@ install_clang_format() {
   if pcsc_fido_ensure_clang_format; then
     return 0
   fi
-  if have apt-get; then
+  if have apt-get && [[ ${PCSC_FIDO_LLVM_PIN} != 1 ]]; then
+    as_root apt-get install -y --no-install-recommends clang-format || return 1
+  elif have apt-get; then
     pcsc_fido_install_clang_format_via_distro || true
     if pcsc_fido_ensure_clang_format; then
       return 0
@@ -534,12 +533,12 @@ install_clang_format() {
   if pcsc_fido_ensure_clang_format; then
     return 0
   fi
-  if ! have clang-format; then
-    printf 'warning: clang-format not installed\n' >&2
-  else
-    printf 'warning: clang-format >= %s required; found %s\n' \
-      "${PCSC_FIDO_CLANG_FORMAT_MIN_VERSION}" \
+  if [[ ${PCSC_FIDO_LLVM_PIN} == 1 ]] && have clang-format; then
+    printf 'warning: clang-format %s required; found %s\n' \
+      "${PCSC_FIDO_LLVM_MAJOR}" \
       "$(pcsc_fido_clang_format_version_raw 2>/dev/null || echo unknown)" >&2
+  else
+    printf 'warning: clang-format not installed\n' >&2
   fi
   return 1
 }
@@ -583,12 +582,11 @@ install_uv() {
   have uv && have uvx
 }
 
-# markdownlint-cli (and its deps, e.g. string-width>=20) requires Node.js >= 20;
-# the RegExp `v` flag it uses throws on Node 18. Ubuntu 24.04 apt ships Node 18,
-# so upgrade via NodeSource. Debian sid / Fedora already ship Node >= 20 and skip
-# straight through. As root, symlink /usr/local/bin/node so `node` (not just
-# `nodejs`) is on PATH for npm wrappers.
-PCSC_FIDO_NODE_MIN_MAJOR="${PCSC_FIDO_NODE_MIN_MAJOR:-20}"
+# markdownlint-cli 0.50 requires Node.js >= 22. Ubuntu 24.04 and Debian trixie
+# apt ship older Node, so upgrade via NodeSource. Debian sid and current Fedora
+# already ship Node >= 22 and skip straight through. As root, symlink
+# /usr/local/bin/node so `node` (not just `nodejs`) is on PATH for npm wrappers.
+PCSC_FIDO_NODE_MIN_MAJOR="${PCSC_FIDO_NODE_MIN_MAJOR:-22}"
 
 pcsc_fido_node_major() {
   local ver=""
@@ -864,6 +862,7 @@ if [[ ${deps_scope} == full ]] && pcsc_fido_host_tools_ok; then
   install_node || true
   install_markdownlint || true
   install_uv || true
+  install_shfmt || true
   printf -- '-- install-linux-deps: host tools already present --\n'
   exit 0
 fi
@@ -980,10 +979,11 @@ if [[ ${deps_scope} == verify ]]; then
 fi
 
 if command -v dnf >/dev/null 2>&1; then
+  # Fedora has no shfmt RPM (keep it off this list or the whole transaction fails).
   as_root dnf install -y \
     cmake gcc make ninja-build pkgconf-pkg-config pcsc-lite pcsc-lite-devel systemd udev \
-    libasan libubsan libtsan rpm-build lcov valgrind \
-    clang clang-analyzer clang-tools-extra cppcheck shellcheck codespell shfmt \
+    libasan libubsan libtsan rpm-build lcov perl-JSON-XS valgrind \
+    clang clang-analyzer clang-tools-extra cppcheck shellcheck codespell \
     yamllint \
     git ca-certificates curl gnupg python3 python3-pip python3-pyyaml nodejs npm
 elif command -v apt-get >/dev/null 2>&1; then
@@ -991,7 +991,7 @@ elif command -v apt-get >/dev/null 2>&1; then
   as_root apt-get update
   as_root apt-get install -y \
     cmake gcc g++ make ninja-build pkg-config pcscd libpcsclite-dev systemd udev \
-    dpkg-dev debhelper lcov valgrind \
+    dpkg-dev debhelper lcov libjson-xs-perl valgrind \
     clang-tools clang-format cppcheck shellcheck codespell shfmt \
     yamllint \
     git ca-certificates curl gnupg python3 python3-pip python3-yaml nodejs npm
@@ -1019,6 +1019,7 @@ pcsc_fido_install_llvm_tool_shims
 install_node || true
 install_markdownlint
 install_uv || true
+install_shfmt || true
 install_libfuzzer_runtime || true
 
 if ! scan_build_ok; then

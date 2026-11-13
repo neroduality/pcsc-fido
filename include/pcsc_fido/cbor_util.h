@@ -24,7 +24,7 @@
 
 /* Spec prefixes for docs/spec-traceability.yaml: IMPL-POLICY RFC8949
  * (cite in-file as [IMPL-POLICY], [RFC8949]). */
-enum {
+enum : unsigned {
   PCSC_FIDO_CBOR_AI_MASK = 0x1Fu,
   PCSC_FIDO_CBOR_MAJOR_TYPE_SHIFT = 5u,
   PCSC_FIDO_CBOR_AI_UINT8 = 24u,  /* [RFC8949] */

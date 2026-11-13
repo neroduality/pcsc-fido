@@ -227,10 +227,8 @@ pcsc_fido_reader_pick_result_t pcsc_fido_pick_reader_from_list(
         !pcsc_fido_reader_name_contains_ci_len(p, p_len, needle, needle_len)) {
       continue;
     }
-    if (matches == 0u) {
-      if (!copy_reader_name(reader, reader_cap, p, p_len)) {
-        return PCSC_FIDO_READER_PICK_NAME_TOO_LONG;
-      }
+    if (matches == 0u && !copy_reader_name(reader, reader_cap, p, p_len)) {
+      return PCSC_FIDO_READER_PICK_NAME_TOO_LONG;
     }
     matches++;
     if (!has_needle && !pcsc_fido_reader_name_is_sam_slot_len(p, p_len)) {

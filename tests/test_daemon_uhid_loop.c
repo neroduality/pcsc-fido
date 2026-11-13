@@ -38,6 +38,7 @@
 #include "pcsc_fido/mem_util.h"
 #include "pcsc_fido/pcsc_log.h"
 #include "scrub_hook.h"
+#include "linker_wrap.h"
 
 enum {
   FAKE_UHID_FD = 121,
@@ -53,7 +54,6 @@ enum {
   HID_HDR_C = 0x43u,
   HID_CID_BYTE_3_OFF = 3,
   HID_CMD_OFF = 4,
-  HID_INIT_PKT_FLAG = 0x80u,
   HID_BCNT_HI_OFF = 5,
   HID_BCNT_LO_OFF = 6,
   HID_DATA_OFF = 7,
@@ -80,20 +80,12 @@ static uint8_t g_last_input_init_cmd;
 static uint8_t g_last_input_init_data0;
 static uint8_t g_ping_payload[] = {TEST_PING_PAYLOAD_BYTE};
 
-extern int __real_poll(struct pollfd* fds, nfds_t nfds, int timeout);
-extern ssize_t __real_read(int fd, void* buf, size_t count);
-extern ssize_t __real_write(int fd, const void* buf, size_t count);
-
-extern int __real_nanosleep(const struct timespec* req, struct timespec* rem);
-
 // rem matches nanosleep(2); LD --wrap requires a non-const second parameter.
 int __wrap_nanosleep(const struct timespec* req PCSC_FIDO_MAYBE_UNUSED,
                      struct timespec* rem PCSC_FIDO_MAYBE_UNUSED) {
   return __real_nanosleep(
       &(const struct timespec){.tv_sec = 0, .tv_nsec = NS_PER_MS}, rem);
 }
-
-extern int __real_clock_gettime(clockid_t clock_id, struct timespec* ts);
 
 int __wrap_clock_gettime(clockid_t clock_id, struct timespec* ts) {
   if (clock_id != CLOCK_MONOTONIC || ts == PCSC_FIDO_NULL) {
@@ -139,7 +131,7 @@ ssize_t __wrap_read(int fd, void* buf, size_t count) {
       packet[HID_CID_BYTE_2_OFF] = HID_HDR_C;
       packet[HID_CID_BYTE_3_OFF] = 0x01u;
       packet[HID_CMD_OFF] =
-          (uint8_t)(HID_INIT_PKT_FLAG | PCSC_FIDO_HID_CMD_PING);
+          (uint8_t)(PCSC_FIDO_HID_TYPE_INIT | PCSC_FIDO_HID_CMD_PING);
       packet[HID_DATA_OFF] = (uint8_t)sizeof(g_ping_payload);
       packet[HID_DATA_NEXT_OFF] = g_ping_payload[0];
       (void)pcsc_fido_copy_bytes(ev->u.output.data, sizeof(packet), 0u, packet,
@@ -163,7 +155,7 @@ ssize_t __wrap_write(int fd, const void* buf, size_t count) {
       }
     }
     if (ev->type == UHID_INPUT2 &&
-        (ev->u.input2.data[HID_CMD_OFF] & HID_INIT_PKT_FLAG) != 0u) {
+        (ev->u.input2.data[HID_CMD_OFF] & PCSC_FIDO_HID_TYPE_INIT) != 0u) {
       g_last_input_init_cmd = ev->u.input2.data[HID_CMD_OFF];
       g_last_input_init_data0 = ev->u.input2.data[HID_DATA_OFF];
     }
@@ -262,7 +254,8 @@ static void build_ping_output(struct uhid_event* ev) {
   packet[1] = HID_HDR_F;
   packet[HID_CID_BYTE_2_OFF] = HID_HDR_C;
   packet[HID_CID_BYTE_3_OFF] = 0x01u;
-  packet[HID_CMD_OFF] = (uint8_t)(HID_INIT_PKT_FLAG | PCSC_FIDO_HID_CMD_PING);
+  packet[HID_CMD_OFF] =
+      (uint8_t)(PCSC_FIDO_HID_TYPE_INIT | PCSC_FIDO_HID_CMD_PING);
   packet[HID_DATA_OFF] = (uint8_t)sizeof(g_ping_payload);
   packet[HID_DATA_NEXT_OFF] = g_ping_payload[0];
   (void)pcsc_fido_copy_bytes(ev->u.output.data, sizeof(packet), 0u, packet,
@@ -328,7 +321,7 @@ static void handle_uhid_event_rate_limit_charges_requests_not_frames(void) {
                        PCSC_FIDO_HID_CONT_PAYLOAD_MAX, TEST_PING_PAYLOAD_BYTE);
   pcsc_fido_daemon_handle_uhid_event(FAKE_UHID_FD, &ev, &pending, &ctx);
   expect_true(g_last_input_init_cmd ==
-                  (uint8_t)(HID_INIT_PKT_FLAG | PCSC_FIDO_HID_CMD_PING),
+                  (uint8_t)(PCSC_FIDO_HID_TYPE_INIT | PCSC_FIDO_HID_CMD_PING),
               "continuation frame is not charged against the request budget");
   expect_true(!pcsc_fido_rate_limit_allow_ctaphid(),
               "the request consumed exactly one budget unit");
@@ -389,7 +382,7 @@ static void rate_limited_cancel_gets_no_reply(void) {
   pcsc_fido_daemon_handle_uhid_event(FAKE_UHID_FD, &ev, &pending, &ctx);
   g_last_input_init_cmd = 0u;
   ev.u.output.data[HID_CMD_OFF] =
-      (uint8_t)(HID_INIT_PKT_FLAG | PCSC_FIDO_HID_CMD_CANCEL);
+      (uint8_t)(PCSC_FIDO_HID_TYPE_INIT | PCSC_FIDO_HID_CMD_CANCEL);
   ev.u.output.data[HID_BCNT_LO_OFF] = 0u;
   pcsc_fido_daemon_handle_uhid_event(FAKE_UHID_FD, &ev, &pending, &ctx);
   expect_true(g_last_input_init_cmd == 0u,
@@ -407,8 +400,8 @@ static void rate_limited_cancel_gets_no_reply(void) {
       "the owner's CANCEL disconnected the card");
   build_ping_output(&ev);
   pcsc_fido_daemon_handle_uhid_event(FAKE_UHID_FD, &ev, &pending, &ctx);
-  expect_true(g_last_input_init_cmd ==
-                      (uint8_t)(HID_INIT_PKT_FLAG | PCSC_FIDO_HID_CMD_ERROR) &&
+  expect_true(g_last_input_init_cmd == (uint8_t)(PCSC_FIDO_HID_TYPE_INIT |
+                                                 PCSC_FIDO_HID_CMD_ERROR) &&
                   g_last_input_init_data0 == PCSC_FIDO_DAEMON_ERR_CHANNEL_BUSY,
               "a rate-limited new request still gets CHANNEL_BUSY");
   pcsc_fido_daemon_signals_shutdown();
@@ -441,7 +434,7 @@ static void handle_uhid_event_assembly_error(void) {
   bind_test_channel(&ctx, cid);
   build_ping_output(&ev);
   ev.u.output.data[HID_CMD_OFF] =
-      (uint8_t)(HID_INIT_PKT_FLAG | PCSC_FIDO_HID_CMD_CBOR);
+      (uint8_t)(PCSC_FIDO_HID_TYPE_INIT | PCSC_FIDO_HID_CMD_CBOR);
   ev.u.output.data[HID_BCNT_HI_OFF] = BYTE_MASK;
   ev.u.output.data[HID_BCNT_LO_OFF] = BYTE_MASK;
   pcsc_fido_daemon_handle_uhid_event(FAKE_UHID_FD, &ev, &pending, &ctx);
@@ -530,7 +523,7 @@ static void signal_request_wakes_poll_fd(void) {
   pfd.events = POLLIN;
   pfd.revents = 0;
   expect_true(__real_poll(&pfd, 1u, SIGNAL_WAKE_POLL_TIMEOUT_MS) == 1 &&
-                  (pfd.revents & POLLIN) != 0,
+                  ((unsigned)pfd.revents & POLLIN) != 0,
               "stop request wakes signal poll fd");
   pcsc_fido_daemon_drain_signal_wake();
   pfd.revents = 0;
@@ -648,7 +641,7 @@ static void run_always_mode_loop(void) {
               "3 successful reads + EAGAIN inbound + 1 reply outbound");
   expect_true(
       g_last_input_init_cmd ==
-              (uint8_t)(HID_INIT_PKT_FLAG | PCSC_FIDO_HID_CMD_ERROR) &&
+              (uint8_t)(PCSC_FIDO_HID_TYPE_INIT | PCSC_FIDO_HID_CMD_ERROR) &&
           g_last_input_init_data0 == PCSC_FIDO_DAEMON_ERR_INVALID_CHANNEL,
       "PING before INIT is rejected with ERR_INVALID_CHANNEL");
   expect_true(scrub_hook_all_zero(), "loop scrubs left regions zeroed");

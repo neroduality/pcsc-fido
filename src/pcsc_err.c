@@ -47,21 +47,17 @@ static void pcsc_fido_err_mark_truncated(char* err, size_t err_cap) {
 }
 
 static bool pcsc_fido_vformat_err(char* err, size_t err_cap, const char* fmt,
+                                  va_list args)
+    __attribute__((format(printf, PCSC_FIDO_FORMAT_ERR_FMT_ARG_INDEX, 0)));
+
+static bool pcsc_fido_vformat_err(char* err, size_t err_cap, const char* fmt,
                                   va_list args) {
-#ifndef __clang_analyzer__
   va_list args_copy;
   int written;
   va_copy(args_copy, args);
-  /* Bounded printf wrapper: fmt is validated by the printf format attribute on
-   * the public API; the libc call still requires a non-literal format. */
-#if defined(__clang__)
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wformat-nonliteral"
-#endif
+  /* Bounded printf wrapper: fmt is checked against the arguments by the printf
+   * format attribute on pcsc_fido_format_err and on this function. */
   written = vsnprintf(err, err_cap, fmt, args_copy);
-#if defined(__clang__)
-#pragma clang diagnostic pop
-#endif
   va_end(args_copy);
   if (written < 0) {
     err[0] = '\0';
@@ -72,19 +68,9 @@ static bool pcsc_fido_vformat_err(char* err, size_t err_cap, const char* fmt,
     return false;
   }
   return true;
-#else
-  (void)fmt;
-  (void)args;
-  if (err == PCSC_FIDO_NULL || err_cap < 1u) {
-    return false;
-  }
-  err[0] = '\0';
-  return false;
-#endif
 }
 
 bool pcsc_fido_format_err(char* err, size_t err_cap, const char* fmt, ...) {
-#ifndef __clang_analyzer__
   va_list args;
   bool ok;
   if (err == PCSC_FIDO_NULL || err_cap == 0u || fmt == PCSC_FIDO_NULL) {
@@ -94,16 +80,6 @@ bool pcsc_fido_format_err(char* err, size_t err_cap, const char* fmt, ...) {
   ok = pcsc_fido_vformat_err(err, err_cap, fmt, args);
   va_end(args);
   return ok;
-#else
-  (void)fmt;
-  (void)pcsc_fido_vformat_err;
-  (void)pcsc_fido_err_mark_truncated;
-  if (err == PCSC_FIDO_NULL || err_cap < 1u) {
-    return false;
-  }
-  err[0] = '\0';
-  return false;
-#endif
 }
 
 void pcsc_fido_set_err(char* err, size_t err_cap, const char* msg) {

@@ -25,10 +25,10 @@
 # container; the CLI zip is fetched inside it and checked against
 # CODEQL_CLI_SHA256 (not TOFU: upstream .checksum.txt is same-origin).
 
-CODEQL_IMAGE_DEFAULT="docker.io/library/debian:sid-slim@sha256:5ac67a4d7c0de96e83873e4dd8f7ea3b507ba292fb2cce60a0c3f73322df5cae"
-CODEQL_CLI_VERSION_DEFAULT="v2.27.3"
-CODEQL_CLI_SHA256_DEFAULT="845075a2fa2fdf72629adc6cbde6264691b698d1f294bd27f10c6b579cd750a4"
-CODEQL_BUNDLE_TAG_DEFAULT="codeql-bundle-v2.27.3"
+CODEQL_IMAGE_DEFAULT="docker.io/library/debian:sid-slim@sha256:07a3205e8583fdff12d2b05bd030f50437e9fd340ee616df0c05dc77af75767b"
+CODEQL_CLI_VERSION_DEFAULT="v2.27.4"
+CODEQL_CLI_SHA256_DEFAULT="393bf92b66596141ec93baf9b483f4a350f3749916c922fed0dd63c67706047d"
+CODEQL_BUNDLE_TAG_DEFAULT="codeql-bundle-v2.27.4"
 CODEQL_BUNDLE_URL_DEFAULT="https://github.com/github/codeql-action/releases/download/${CODEQL_BUNDLE_TAG_DEFAULT}/codeql-bundle-linux64.tar.zst"
 
 # Resolve CODEQL_CLI_VERSION / CODEQL_CLI_SHA256 from the environment and the

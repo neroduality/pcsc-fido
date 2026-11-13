@@ -15,7 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Resolve cppcheck >= 2.19.1 for lint parity with current Fedora.
+# Resolve cppcheck >= 2.22.0 (lint kit tool-versions.yaml floor).
 # Ubuntu 24.04 apt ships 2.13.x, which mis-parses _Generic macros and emits
 # extra variableScope noise; build the upstream release when the distro package
 # is too old.
@@ -24,8 +24,8 @@
 #   pcsc_fido_ensure_cppcheck
 set -euo pipefail
 
-PCSC_FIDO_CPPCHECK_MIN_VERSION=2.19.1
-PCSC_FIDO_CPPCHECK_SOURCE_VERSION=2.19.1
+PCSC_FIDO_CPPCHECK_MIN_VERSION=2.22.0
+PCSC_FIDO_CPPCHECK_SOURCE_VERSION=2.22.0
 
 pcsc_fido_cppcheck_hint() {
   printf '%s\n' \

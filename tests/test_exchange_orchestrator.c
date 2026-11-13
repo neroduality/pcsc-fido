@@ -42,9 +42,11 @@
 #include "pcsc_fido/mem_util.h"
 #include "pcsc_fido/pcsc_log.h"
 #include "scrub_hook.h"
+#include "linker_wrap.h"
 
-enum {
+enum : unsigned {
   FAKE_TIME_START = 1000000,
+  DRAIN_BUF_LEN = 4096,
   GETINFO_RESPONSE_LEN = 4,
   SMALL_RESPONSE_CAPACITY = 2,
   UINT32_BYTE3_SHIFT = 24,
@@ -55,7 +57,6 @@ enum {
   HID_CID_BYTE3_OFFSET = 3,
   HID_CMD_OFFSET = 4,
   HID_BCNTL_OFFSET = 6,
-  HID_INIT_PACKET_FLAG = 0x80u,
   HID_INIT_DATA_OFFSET = 7,
   DRAIN_CAPTURE_EVENTS = 16,
   OTHER_CHANNEL_CID = 0x0BADC0DEu,
@@ -70,9 +71,6 @@ enum {
 static time_t g_fake_time = FAKE_TIME_START;
 static atomic_bool g_fail_pthread_create;
 
-extern int __real_pthread_create(pthread_t* thread, const pthread_attr_t* attr,
-                                 void* (*start_routine)(void*), void* arg);
-
 int __wrap_pthread_create(pthread_t* thread, const pthread_attr_t* attr,
                           void* (*start_routine)(void*), void* arg) {
   if (atomic_load_explicit(&g_fail_pthread_create, memory_order_relaxed)) {
@@ -86,8 +84,6 @@ int __wrap_nanosleep(const struct timespec* req PCSC_FIDO_MAYBE_UNUSED,
                      struct timespec* rem PCSC_FIDO_MAYBE_UNUSED) {
   return 0;
 }
-
-extern int __real_clock_gettime(clockid_t clock_id, struct timespec* ts);
 
 int __wrap_clock_gettime(clockid_t clock_id, struct timespec* ts) {
   if (clock_id != CLOCK_MONOTONIC || ts == PCSC_FIDO_NULL) {
@@ -132,7 +128,7 @@ typedef struct {
 static void* drain_socket_main(void* arg) {
   socket_drain_arg_t* ctx = (socket_drain_arg_t*)arg;
   const int fd = ctx->fd;
-  uint8_t buf[TEST_CAP_4096];
+  uint8_t buf[DRAIN_BUF_LEN];
   ssize_t got;
   while ((got = read(fd, buf, sizeof(buf))) > 0) {
     const size_t cap = sizeof(ctx->captured);
@@ -156,7 +152,7 @@ static unsigned captured_error_frames(const socket_drain_arg_t* arg) {
   }
   for (size_t i = 0u; i < events; i++) {
     if (arg->captured[i].u.input2.data[HID_CMD_OFFSET] ==
-        (uint8_t)(HID_INIT_PACKET_FLAG | PCSC_FIDO_HID_CMD_ERROR)) {
+        (uint8_t)(PCSC_FIDO_HID_TYPE_INIT | PCSC_FIDO_HID_CMD_ERROR)) {
       errors++;
     }
   }
@@ -277,7 +273,7 @@ static void build_hid_packet(uint8_t packet[PCSC_FIDO_HID_PACKET_SIZE],
   packet[HID_CID_BYTE2_OFFSET] =
       (uint8_t)((cid >> UINT32_BYTE1_SHIFT) & BYTE_MASK);
   packet[HID_CID_BYTE3_OFFSET] = (uint8_t)(cid & BYTE_MASK);
-  packet[HID_CMD_OFFSET] = (uint8_t)(HID_INIT_PACKET_FLAG | cmd);
+  packet[HID_CMD_OFFSET] = (uint8_t)(PCSC_FIDO_HID_TYPE_INIT | cmd);
 }
 
 static void queue_uhid_packet(int fd, const uint8_t packet[]) {
@@ -294,8 +290,6 @@ static void queue_uhid_packet(int fd, const uint8_t packet[]) {
  * the peer fd once the worker has finished, after the loop's last poll. */
 static atomic_int g_after_join_fd = -1;
 static struct uhid_event g_after_join_event;
-
-extern int __real_pthread_join(pthread_t thread, void** retval);
 
 int __wrap_pthread_join(pthread_t thread, void** retval) {
   const int rc = __real_pthread_join(thread, retval);

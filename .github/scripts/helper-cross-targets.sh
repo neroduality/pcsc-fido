@@ -23,9 +23,11 @@ if [[ ${BASH_SOURCE[0]} == "${0}" ]]; then
   exit 1
 fi
 
-# shellcheck disable=SC2034
-PCSC_FIDO_CROSS_ARCHES=(armhf ppc64el riscv64 s390x)
 PCSC_FIDO_CROSS_SYSROOT_BASE="${PCSC_FIDO_CROSS_SYSROOT_BASE:-/usr/lib/pcsc-fido/cross-sysroot}"
+
+pcsc_fido_cross_arches() {
+  printf '%s\n' armhf ppc64el riscv64 s390x
+}
 
 pcsc_fido_cross_triplet() {
   case "$1" in
@@ -108,7 +110,6 @@ pcsc_fido_cross_pcsc_apt_suite() {
 
 pcsc_fido_debian_host_suite() {
   if [[ -f /etc/os-release ]]; then
-    # shellcheck disable=SC1091
     . /etc/os-release
     if [[ -n ${VERSION_CODENAME:-} ]]; then
       printf '%s\n' "${VERSION_CODENAME}"

@@ -38,7 +38,7 @@ Arguments after `--` replace the entire default TruffleHog command line.
 Environment:
   CONTAINER_ENGINE      docker (default) or podman
   CI_PLATFORM           Default linux/amd64 when unset. Set empty (CI_PLATFORM=) for native arch.
-  TRUFFLEHOG_IMAGE      Image (default: digest-pinned trufflesecurity/trufflehog:3.99.7)
+  TRUFFLEHOG_IMAGE      Image (default: digest-pinned trufflesecurity/trufflehog:3.99.8)
 
 EOF
 }
@@ -57,7 +57,7 @@ if ! command -v "${ENGINE}" >/dev/null 2>&1; then
   exit 1
 fi
 
-TRUFFLEHOG_IMAGE="${TRUFFLEHOG_IMAGE:-trufflesecurity/trufflehog:3.99.7@sha256:0d003fc3abc4e1565eca8462b992001314de51451e96e3c44de80d116794d5d1}"
+TRUFFLEHOG_IMAGE="${TRUFFLEHOG_IMAGE:-trufflesecurity/trufflehog:3.99.8@sha256:674b2f187620a19df77f44cf9a7d77efcc581a5662accef2f2739cbb46ba4a3a}"
 
 PLATFORM_ARGS=()
 _resolved_platform="${CI_PLATFORM-linux/amd64}"
